@@ -304,7 +304,7 @@ textarea { resize: vertical; min-height: 72px; }
 /* ─── TOAST ───────────────────────────────────────────────────────────────── */
 #toast {
   position: fixed;
-  bottom: 24px;
+  bottom: 80px;
   left: 50%;
   transform: translateX(-50%) translateY(80px);
   background: #1e3354;
