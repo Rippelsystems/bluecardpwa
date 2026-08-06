@@ -4,8 +4,8 @@
 // LIVE project: rifargmdjzsqgkttwgoy
 // Get your anon key from: Supabase Dashboard → Project Settings → API
 
-const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY_HERE';
+const SUPABASE_URL = 'https://wtkbsvopuvtxiprjtqqx.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_Yyt1XI--EtpYXbsdFy9c8A_4_tTQr9M';
 
 // ─── CLIENT ───────────────────────────────────────────────────────────────────
 // Using the Supabase CDN client (loaded in index.html)
