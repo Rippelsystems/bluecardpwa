@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a1628">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Blue Card — Project Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* ── DASHBOARD EXTRAS ─────────────────────────────────────────── */
+    .dash-header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: sticky; top: 0; z-index: 10;
+    }
+    .dash-header h1 { font-size: 17px; font-weight: 700; flex: 1; }
+    .back-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* ── PROJECT CARDS ────────────────────────────────────────────── */
+    .projects-grid {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    .project-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .project-card:active { border-color: var(--accent); }
+    .project-card.empty { opacity: 0.45; cursor: default; }
+
+    .project-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .project-badge {
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+    .project-name { font-size: 15px; font-weight: 700; flex: 1; }
+    .project-total { font-size: 12px; color: var(--text-dim); }
+
+    /* ── STATUS BAR ───────────────────────────────────────────────── */
+    .status-bar {
+      height: 8px;
+      border-radius: 4px;
+      background: var(--border);
+      overflow: hidden;
+      margin-bottom: 10px;
+      display: flex;
+    }
+    .status-bar .seg-complete   { background: #e03c3c; }
+    .status-bar .seg-inprogress { background: #e08f1a; }
+    .status-bar .seg-unbuilt    { background: #1db96a; }
+
+    .status-counts {
+      display: flex;
+      gap: 14px;
+    }
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot.green  { background: #1db96a; }
+    .dot.orange { background: #e08f1a; }
+    .dot.red    { background: #e03c3c; }
+
+    /* ── SERIAL LIST PANEL ────────────────────────────────────────── */
+    #serial-panel {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 50;
+      flex-direction: column;
+    }
+    #serial-panel.open { display: flex; }
+
+    .panel-header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: sticky; top: 0;
+    }
+    .panel-header h2 { font-size: 15px; font-weight: 700; flex: 1; }
+
+    .filter-bar {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .filter-btn {
+      flex: 1;
+      padding: 7px 4px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-dim);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+    }
+    .filter-btn.active-all      { background: var(--accent);  border-color: var(--accent);  color: #fff; }
+    .filter-btn.active-green    { background: #1db96a; border-color: #1db96a; color: #fff; }
+    .filter-btn.active-orange   { background: #e08f1a; border-color: #e08f1a; color: #fff; }
+    .filter-btn.active-red      { background: #e03c3c; border-color: #e03c3c; color: #fff; }
+
+    .serial-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+    }
+    .serial-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .serial-row:last-child { border-bottom: none; }
+    .serial-num {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 600;
+      flex: 1;
+    }
+    .serial-status-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+    .badge-unbuilt    { background: rgba(29,185,106,0.15); color: #1db96a; }
+    .badge-inprogress { background: rgba(224,143,26,0.15); color: #e08f1a; }
+    .badge-complete   { background: rgba(224,60,60,0.15);  color: #e03c3c; }
+
+    .serial-operator {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+    }
+
+    .loading-msg {
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 13px;
+      padding: 40px 0;
+    }
+
+    /* ── COMING SOON BADGE ────────────────────────────────────────── */
+    .coming-soon {
+      font-size: 10px;
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      padding: 2px 7px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── MAIN DASHBOARD ──────────────────────────────────────────────────── -->
+<div class="dash-header">
+  <span class="card-badge">Blue Card</span>
+  <h1>Project Dashboard</h1>
+  <button class="back-btn" onclick="window.location.href='index.html'">← Build Cards</button>
+</div>
+
+<div class="projects-grid" id="projects-grid">
+  <div class="loading-msg">Loading projects…</div>
+</div>
+
+<!-- ── SERIAL LIST PANEL (slides over) ────────────────────────────────── -->
+<div id="serial-panel">
+  <div class="panel-header">
+    <button class="back-btn" onclick="closePanel()">← Back</button>
+    <h2 id="panel-title">Serials</h2>
+    <span id="panel-count" style="font-size:12px;color:var(--text-dim)"></span>
+  </div>
+
+  <div class="filter-bar">
+    <button class="filter-btn active-all" id="filter-all"        onclick="setFilter('ALL')">ALL</button>
+    <button class="filter-btn"            id="filter-unbuilt"    onclick="setFilter('UNBUILT')">🟢 OPEN</button>
+    <button class="filter-btn"            id="filter-inprogress" onclick="setFilter('IN PROGRESS')">🟡 IN PROG</button>
+    <button class="filter-btn"            id="filter-complete"   onclick="setFilter('COMPLETE')">🔴 DONE</button>
+  </div>
+
+  <div class="serial-list" id="serial-list">
+    <div class="loading-msg">Loading serials…</div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase.js"></script>
+<script>
+  let allSerials   = [];
+  let currentFilter = 'ALL';
+
+  // ── BOOT ────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    initSupabase();
+    loadProjects();
+  });
+
+  // ── LOAD PROJECTS ───────────────────────────────────────────────────
+  async function loadProjects() {
+    const grid = document.getElementById('projects-grid');
+
+    // Get serial counts grouped by project from Supabase
+    const { data, error } = await supabaseClient
+      .from('weapon_serials')
+      .select('project, customer, card_type, status');
+
+    if (error) {
+      grid.innerHTML = '<div class="loading-msg">Could not load projects — check connection</div>';
+      return;
+    }
+
+    // Group by project
+    const projects = {};
+    data.forEach(row => {
+      if (!projects[row.project]) {
+        projects[row.project] = {
+          name: row.project,
+          customer: row.customer,
+          card_type: row.card_type,
+          total: 0, unbuilt: 0, inprogress: 0, complete: 0
+        };
+      }
+      projects[row.project].total++;
+      if (row.status === 'UNBUILT')      projects[row.project].unbuilt++;
+      else if (row.status === 'IN PROGRESS') projects[row.project].inprogress++;
+      else if (row.status === 'COMPLETE') projects[row.project].complete++;
+    });
+
+    // Known future projects (empty placeholders)
+    const future = [
+      { name: 'XRGL40 Project', customer: 'TBC', card_type: 'XRGL40', total: 0, unbuilt: 0, inprogress: 0, complete: 0 },
+      { name: 'GRN40 Project',  customer: 'TBC', card_type: 'GRN40',  total: 0, unbuilt: 0, inprogress: 0, complete: 0 },
+    ];
+
+    grid.innerHTML = '';
+
+    // Render active projects first
+    Object.values(projects).forEach(p => renderProjectCard(p, false));
+
+    // Render future placeholders
+    future.forEach(p => renderProjectCard(p, true));
+  }
+
+  function renderProjectCard(p, isEmpty) {
+    const grid = document.getElementById('projects-grid');
+    const pct_complete   = p.total ? (p.complete   / p.total * 100) : 0;
+    const pct_inprogress = p.total ? (p.inprogress / p.total * 100) : 0;
+    const pct_unbuilt    = p.total ? (p.unbuilt    / p.total * 100) : 0;
+
+    const card = document.createElement('div');
+    card.className = `project-card${isEmpty ? ' empty' : ''}`;
+    if (!isEmpty) card.onclick = () => openPanel(p.name);
+
+    card.innerHTML = `
+      <div class="project-top">
+        <span class="project-badge">${p.card_type}</span>
+        <span class="project-name">${p.name}</span>
+        ${isEmpty ? '<span class="coming-soon">No data yet</span>' : `<span class="project-total">${p.total} units</span>`}
+      </div>
+      ${p.total > 0 ? `
+        <div class="status-bar">
+          <div class="seg-complete"    style="width:${pct_complete}%"></div>
+          <div class="seg-inprogress"  style="width:${pct_inprogress}%"></div>
+          <div class="seg-unbuilt"     style="width:${pct_unbuilt}%"></div>
+        </div>
+        <div class="status-counts">
+          <div class="status-pill"><div class="dot green"></div>${p.unbuilt} Open</div>
+          <div class="status-pill"><div class="dot orange"></div>${p.inprogress} In Progress</div>
+          <div class="status-pill"><div class="dot red"></div>${p.complete} Complete</div>
+        </div>
+      ` : '<div style="font-size:12px;color:var(--text-dim);margin-top:4px">No serials loaded yet</div>'}
+    `;
+    grid.appendChild(card);
+  }
+
+  // ── SERIAL PANEL ────────────────────────────────────────────────────
+  async function openPanel(projectName) {
+    document.getElementById('panel-title').textContent = projectName;
+    document.getElementById('serial-panel').classList.add('open');
+    document.getElementById('serial-list').innerHTML = '<div class="loading-msg">Loading serials…</div>';
+
+    const { data, error } = await supabaseClient
+      .from('weapon_serials')
+      .select('serial_number, status, card_type')
+      .eq('project', projectName)
+      .order('serial_number');
+
+    if (error || !data) {
+      document.getElementById('serial-list').innerHTML = '<div class="loading-msg">Could not load serials</div>';
+      return;
+    }
+
+    allSerials = data;
+    document.getElementById('panel-count').textContent = `${data.length} serials`;
+    setFilter('ALL');
+  }
+
+  function closePanel() {
+    document.getElementById('serial-panel').classList.remove('open');
+    currentFilter = 'ALL';
+    loadProjects(); // refresh counts
+  }
+
+  function setFilter(f) {
+    currentFilter = f;
+    // Update button styles
+    document.getElementById('filter-all').className        = `filter-btn${f==='ALL'          ? ' active-all'      : ''}`;
+    document.getElementById('filter-unbuilt').className    = `filter-btn${f==='UNBUILT'       ? ' active-green'    : ''}`;
+    document.getElementById('filter-inprogress').className = `filter-btn${f==='IN PROGRESS'   ? ' active-orange'   : ''}`;
+    document.getElementById('filter-complete').className   = `filter-btn${f==='COMPLETE'       ? ' active-red'      : ''}`;
+    renderSerials();
+  }
+
+  function renderSerials() {
+    const list = document.getElementById('serial-list');
+    const filtered = currentFilter === 'ALL'
+      ? allSerials
+      : allSerials.filter(s => s.status === currentFilter);
+
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="loading-msg">No serials match this filter</div>';
+      return;
+    }
+
+    list.innerHTML = filtered.map(s => {
+      const badgeClass = s.status === 'COMPLETE'
+        ? 'badge-complete'
+        : s.status === 'IN PROGRESS'
+        ? 'badge-inprogress'
+        : 'badge-unbuilt';
+      const label = s.status === 'IN PROGRESS' ? 'IN PROG' : s.status;
+      return `
+        <div class="serial-row">
+          <div class="dot ${s.status==='COMPLETE' ? 'red' : s.status==='IN PROGRESS' ? 'orange' : 'green'}"></div>
+          <span class="serial-num">${s.serial_number}</span>
+          <span class="serial-status-badge ${badgeClass}">${label}</span>
+        </div>`;
+    }).join('');
+  }
+
+  // ── TOAST ───────────────────────────────────────────────────────────
+  let toastTimer;
+  function showToast(msg, type='ok') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `toast ${type} visible`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('visible'), 3000);
+  }
+</script>
+</body>
+</html>
