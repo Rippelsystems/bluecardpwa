@@ -3,10 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0a1628">
+  <meta name="theme-color" content="#1a2236">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Blue Card — RLL Build Card</title>
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,113 +14,133 @@
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     SCREEN — LOGIN
-════════════════════════════════════════════════════════════════════════════ -->
+<!-- ══ LOGIN ════════════════════════════════════════════════════════════════ -->
 <section id="screen-login" class="screen active">
   <div class="login-logo">
     <div class="logo-badge">Blue Card Digital</div>
     <h1>Build Card<br>System</h1>
-    <p>RLL · Operator session login</p>
+    <p>RLL 37/38 · Operator session login</p>
   </div>
   <div class="login-card">
     <div class="field-group">
       <label for="inp-operator">Operator Number</label>
-      <input type="text" id="inp-operator" placeholder="e.g. 042"
-             inputmode="numeric" autocomplete="off">
+      <input type="text" id="inp-operator" placeholder="e.g. 042" inputmode="numeric" autocomplete="off">
     </div>
     <button class="btn btn-primary" onclick="handleLogin()">Start Session</button>
     <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'">📊 Project Dashboard</button>
   </div>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     SCREEN — UNIT IDENTITY
-════════════════════════════════════════════════════════════════════════════ -->
+<!-- ══ SCREEN: IDENTITY (Build History Card) ════════════════════════════════ -->
 <section id="screen-identity" class="screen">
   <div class="topbar">
     <span class="card-badge">RLL</span>
-    <span class="title">Unit Identity</span>
-    <span class="operator-tag">OP <span id="hdr-assy-no-display">—</span></span>
+    <span class="title">Build History Card</span>
+    <span class="operator-tag">OP <span id="id-op">—</span></span>
   </div>
 
   <div class="content">
-    <div class="section-head">
-      <span class="section-num">01</span>
-      <h2>Header Fields</h2>
-    </div>
+    <div class="card-box">
+      <div class="card-box-title">RLL 37/38 Build History Card</div>
 
-    <div class="field-grid">
-      <div class="field-group">
-        <label>Assy No (Operator)</label>
-        <div class="static-field" id="hdr-assy-no-display2">—</div>
-      </div>
-      <div class="field-group">
-        <label>Date</label>
-        <div class="static-field" id="hdr-date">—</div>
-      </div>
+      <!-- Logo + Trolley row -->
+      <div class="card-grid">
+        <div class="card-cell">
+          <label>Trolley No</label>
+          <select id="inp-trolley-no" onchange="handleTrolleyChange()"></select>
+        </div>
+        <div class="card-cell" style="display:flex;align-items:center;justify-content:flex-end;">
+          <div class="logo-text">Rippel<span>effect</span></div>
+        </div>
 
-      <div class="field-group span2">
-        <label for="inp-serial">Serial Number</label>
-        <input type="text" id="inp-serial" placeholder="e.g. RLL-2026-0042"
-               autocomplete="off" autocapitalize="characters" spellcheck="false">
-      </div>
+        <div class="card-cell">
+          <label>Trolley Position</label>
+          <select id="inp-trolley-pos"></select>
+        </div>
+        <div class="card-cell">
+          <label>Year of Manufacturing</label>
+          <select id="inp-year"></select>
+        </div>
 
-      <div class="field-group">
-        <label for="inp-lot">Lot Number</label>
-        <input type="text" id="inp-lot" placeholder="LOT-" autocomplete="off">
-      </div>
-      <div class="field-group">
-        <label for="inp-batch">Batch Number</label>
-        <input type="text" id="inp-batch" placeholder="BAT-" autocomplete="off">
-      </div>
+        <div class="card-cell span2">
+          <label>Client / Country</label>
+          <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;"></select>
+        </div>
 
-      <div class="field-group span2">
-        <label for="inp-contract">Contract Number</label>
-        <input type="text" id="inp-contract" placeholder="Contract ref" autocomplete="off">
-      </div>
+        <!-- Launcher Serial | Barrel No -->
+        <div class="card-cell">
+          <label class="yellow">Launcher Serial No</label>
+          <div class="serial-row">
+            <input type="text" id="inp-launcher-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+            <img class="serial-thumb" id="thumb-inp-launcher-serial">
+            <button class="cam-btn" onclick="captureSerial('inp-launcher-serial','photo_launcher')">📷</button>
+          </div>
+        </div>
+        <div class="card-cell">
+          <label class="yellow">Barrel No</label>
+          <div class="serial-row">
+            <input type="text" id="inp-barrel-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+            <img class="serial-thumb" id="thumb-inp-barrel-no">
+            <button class="cam-btn" onclick="captureSerial('inp-barrel-no','photo_barrel')">📷</button>
+          </div>
+        </div>
 
-      <div class="field-group span2">
-        <label for="inp-customer">Customer</label>
-        <input type="text" id="inp-customer" placeholder="Customer name" autocomplete="off">
-      </div>
+        <!-- Cylinder No | Barrel Production No -->
+        <div class="card-cell">
+          <label class="yellow">Cylinder No</label>
+          <div class="serial-row">
+            <input type="text" id="inp-cylinder-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+            <img class="serial-thumb" id="thumb-inp-cylinder-no">
+            <button class="cam-btn" onclick="captureSerial('inp-cylinder-no','photo_cylinder')">📷</button>
+          </div>
+        </div>
+        <div class="card-cell">
+          <label class="yellow">Barrel Production No</label>
+          <div class="serial-row">
+            <input type="text" id="inp-barrel-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+            <img class="serial-thumb" id="thumb-inp-barrel-prod-no">
+            <button class="cam-btn" onclick="captureSerial('inp-barrel-prod-no','photo_barrel_prod')">📷</button>
+          </div>
+        </div>
 
-      <div class="field-group">
-        <label for="inp-model">Model</label>
-        <input type="text" id="inp-model" value="RLL" autocomplete="off">
-      </div>
-      <div class="field-group">
-        <label for="inp-calibre">Calibre</label>
-        <input type="text" id="inp-calibre" placeholder="e.g. 7.62×51" autocomplete="off">
-      </div>
+        <!-- Cylinder Production No | HRC Serial No -->
+        <div class="card-cell">
+          <label class="yellow">Cylinder Production No</label>
+          <div class="serial-row">
+            <input type="text" id="inp-cylinder-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+            <img class="serial-thumb" id="thumb-inp-cylinder-prod-no">
+            <button class="cam-btn" onclick="captureSerial('inp-cylinder-prod-no','photo_cylinder_prod')">📷</button>
+          </div>
+        </div>
+        <div class="card-cell">
+          <label class="yellow">HRC Serial No</label>
+          <div class="serial-row">
+            <input type="text" id="inp-hrc-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+            <img class="serial-thumb" id="thumb-inp-hrc-serial">
+            <button class="cam-btn" onclick="captureSerial('inp-hrc-serial','photo_hrc')">📷</button>
+          </div>
+        </div>
 
-      <div class="field-group">
-        <label for="inp-barrel-len">Barrel Length</label>
-        <input type="text" id="inp-barrel-len" placeholder="e.g. 508mm" autocomplete="off">
-      </div>
-      <div class="field-group">
-        <label for="inp-colour">Colour / Finish</label>
-        <input type="text" id="inp-colour" placeholder="e.g. Matte Black" autocomplete="off">
-      </div>
-
-      <div class="field-group">
-        <label for="inp-stock-type">Stock Type</label>
-        <input type="text" id="inp-stock-type" placeholder="Type" autocomplete="off">
-      </div>
-      <div class="field-group">
-        <label for="inp-grip-type">Grip Type</label>
-        <input type="text" id="inp-grip-type" placeholder="Type" autocomplete="off">
-      </div>
-
-      <div class="field-group">
-        <label for="inp-trigger-type">Trigger Type</label>
-        <input type="text" id="inp-trigger-type" placeholder="Type" autocomplete="off">
-      </div>
-      <div class="field-group">
-        <label for="inp-spec-ref">Spec Reference</label>
-        <input type="text" id="inp-spec-ref" placeholder="Spec ref" autocomplete="off">
-      </div>
-    </div>
+        <!-- HFM Serial No | Firing Mech No -->
+        <div class="card-cell">
+          <label class="yellow">HFM Serial No</label>
+          <div class="serial-row">
+            <input type="text" id="inp-hfm-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+            <img class="serial-thumb" id="thumb-inp-hfm-serial">
+            <button class="cam-btn" onclick="captureSerial('inp-hfm-serial','photo_hfm')">📷</button>
+          </div>
+        </div>
+        <div class="card-cell">
+          <label class="yellow">Firing Mech No</label>
+          <div class="serial-row">
+            <input type="text" id="inp-firing-mech" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+            <img class="serial-thumb" id="thumb-inp-firing-mech">
+            <button class="cam-btn" onclick="captureSerial('inp-firing-mech','photo_firing_mech')">📷</button>
+          </div>
+        </div>
+      </div><!-- end card-grid -->
+      <div class="ocr-status" id="ocr-status">📷 Tap camera icon next to any yellow field to capture serial</div>
+    </div><!-- end card-box -->
   </div>
 
   <div class="action-bar">
@@ -129,189 +148,112 @@
   </div>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     SCREEN — SERIAL VERIFICATION
-════════════════════════════════════════════════════════════════════════════ -->
+<!-- ══ SCREEN: SERIAL VERIFY ════════════════════════════════════════════════ -->
 <section id="screen-serial" class="screen">
   <div class="topbar">
     <span class="card-badge">RLL</span>
     <span class="title">Serial Verification</span>
-    <span class="operator-tag">OP <span id="sv-op-display">—</span></span>
+    <span class="step-indicator">Step 2</span>
   </div>
-
   <div class="content">
-    <div class="section-head">
-      <span class="section-num">02</span>
-      <h2>Confirm Serial Number</h2>
-    </div>
-
+    <div class="section-head"><span class="section-num">02</span><h2>Confirm Launcher Serial</h2></div>
     <div id="serial-status" class="serial-verified">Not yet verified</div>
-
-    <p class="serial-note">
-      Type the serial number twice. Both must match exactly.
-      System checks for duplicates before confirming.
-    </p>
-
+    <p class="warn-note" style="font-size:12px;margin-bottom:14px;">Type the launcher serial twice — both must match exactly. Duplicates are blocked.</p>
     <div class="field-group">
-      <label for="inp-serial-1">Serial — First Entry</label>
-      <input type="text" id="inp-serial-1" placeholder="Type serial number"
-             autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <label>Launcher Serial — First Entry</label>
+      <input type="text" id="inp-serial-1" placeholder="Type serial" autocomplete="off" autocapitalize="characters" spellcheck="false">
     </div>
     <div class="field-group">
-      <label for="inp-serial-2">Serial — Second Entry</label>
-      <input type="text" id="inp-serial-2" placeholder="Re-type serial number"
-             autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <label>Launcher Serial — Second Entry</label>
+      <input type="text" id="inp-serial-2" placeholder="Re-type serial" autocomplete="off" autocapitalize="characters" spellcheck="false">
     </div>
-
-    <p class="serial-note warn-note">
-      ⚠ Duplicate serials will be blocked automatically.
-    </p>
   </div>
-
   <div class="action-bar">
     <button class="btn btn-primary" id="btn-serial-confirm" onclick="handleSerialConfirm()">Confirm Serial</button>
   </div>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     SCREEN — INSPECTION CHECKS
-════════════════════════════════════════════════════════════════════════════ -->
+<!-- ══ SCREEN: CHECKS ════════════════════════════════════════════════════════ -->
 <section id="screen-checks" class="screen">
   <div class="topbar">
     <span class="card-badge">RLL</span>
     <span class="title">Inspection Checks</span>
-    <span id="checks-progress" class="step-indicator">0 / 17 marked</span>
+    <span class="step-indicator" id="checks-progress">0 / 17</span>
   </div>
-
   <div class="content">
-    <div class="section-head">
-      <span class="section-num">03</span>
-      <h2>17 Inspection Points</h2>
-    </div>
+    <div class="section-head"><span class="section-num">03</span><h2>17 Inspection Points</h2></div>
     <div id="checks-list"></div>
   </div>
-
   <div class="action-bar">
     <button class="btn btn-primary" onclick="saveChecks()">Save Progress</button>
   </div>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     SCREEN — QA SIGN-OFF
-════════════════════════════════════════════════════════════════════════════ -->
+<!-- ══ SCREEN: SIGN-OFF ══════════════════════════════════════════════════════ -->
 <section id="screen-signoff" class="screen">
   <div class="topbar">
     <span class="card-badge">RLL</span>
     <span class="title">QA Sign-off</span>
+    <span class="step-indicator">Step 4</span>
   </div>
-
   <div class="content">
-    <div class="section-head">
-      <span class="section-num">04</span>
-      <h2>Quality Assurance</h2>
-    </div>
-
+    <div class="section-head"><span class="section-num">04</span><h2>Quality Assurance</h2></div>
     <table class="summary-table">
-      <tr>
-        <td>Serial Number</td>
-        <td id="so-summary-serial">—</td>
-      </tr>
-      <tr>
-        <td>Operator</td>
-        <td id="so-summary-operator">—</td>
-      </tr>
-      <tr>
-        <td>Date</td>
-        <td id="so-summary-date">—</td>
-      </tr>
-      <tr>
-        <td>Checks Complete</td>
-        <td id="so-checks-done">—</td>
-      </tr>
-      <tr>
-        <td>Failed Checks</td>
-        <td><span class="badge" id="so-fail-count">0</span></td>
-      </tr>
+      <tr><td>Launcher Serial</td><td id="so-serial">—</td></tr>
+      <tr><td>Operator</td><td id="so-operator">—</td></tr>
+      <tr><td>Date</td><td id="so-date">—</td></tr>
+      <tr><td>Checks Complete</td><td id="so-checks">—</td></tr>
+      <tr><td>Failed Checks</td><td><span class="badge" id="so-fails">0</span></td></tr>
     </table>
-
     <div class="divider"></div>
-
     <div class="field-group">
-      <label for="inp-qa-operator">QA Operator Number *</label>
-      <input type="text" id="inp-qa-operator" placeholder="QA operator number"
-             inputmode="numeric" autocomplete="off">
+      <label>QA Operator Number *</label>
+      <input type="text" id="inp-qa-operator" placeholder="QA operator number" inputmode="numeric" autocomplete="off">
     </div>
     <div class="field-group">
-      <label for="inp-qa-note">QA Notes (optional)</label>
+      <label>QA Notes (optional)</label>
       <textarea id="inp-qa-note" placeholder="Observations, NCRs, comments…"></textarea>
     </div>
   </div>
-
   <div class="action-bar">
     <button class="btn btn-primary" id="btn-submit" onclick="handleSubmit()">Submit &amp; Save Build Card</button>
   </div>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     SCREEN — COMPLETE
-════════════════════════════════════════════════════════════════════════════ -->
-<section id="screen-complete" class="screen">
+<!-- ══ SCREEN: COMPLETE ══════════════════════════════════════════════════════ -->
+<section id="screen-complete" class="screen" style="justify-content:center;align-items:center;text-align:center;padding:32px 24px;">
   <div class="complete-icon">✅</div>
   <h2>Build Card Saved</h2>
   <div class="complete-serial" id="done-serial"></div>
-  <p style="color:var(--text-dim);font-size:13px;margin-bottom:32px;">
-    RLL build card recorded and signed off.
-  </p>
+  <p style="color:var(--text-dim);font-size:13px;margin-bottom:28px;">RLL build card recorded and signed off.</p>
   <div class="complete-btns">
     <button class="btn btn-primary"   onclick="startNewCard()">Start Another Unit</button>
     <button class="btn btn-secondary" onclick="endSession()">End Session</button>
   </div>
 </section>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-     BOTTOM NAV — always visible when logged in
-════════════════════════════════════════════════════════════════════════════ -->
+<!-- ══ BOTTOM NAV ════════════════════════════════════════════════════════════ -->
 <nav id="bottom-nav" class="bottom-nav hidden">
   <button class="nav-tab" data-screen="screen-identity" onclick="showSection('identity')">
-    <span class="nav-icon">📋</span>
-    <span class="nav-label">Identity</span>
+    <span class="nav-icon">📋</span><span class="nav-label">Identity</span>
   </button>
-  <button class="nav-tab" data-screen="screen-serial"   onclick="showSection('serial')">
-    <span class="nav-icon">🔢</span>
-    <span class="nav-label">Serial</span>
+  <button class="nav-tab" data-screen="screen-serial" onclick="showSection('serial')">
+    <span class="nav-icon">🔢</span><span class="nav-label">Serial</span>
   </button>
-  <button class="nav-tab" data-screen="screen-checks"   onclick="showSection('checks')">
-    <span class="nav-icon">✅</span>
-    <span class="nav-label">Checks</span>
+  <button class="nav-tab" data-screen="screen-checks" onclick="showSection('checks')">
+    <span class="nav-icon">✅</span><span class="nav-label">Checks</span>
     <span class="nav-badge" id="nav-badge-checks" style="display:none"></span>
   </button>
-  <button class="nav-tab" data-screen="screen-signoff"  onclick="showSection('signoff')">
-    <span class="nav-icon">🖊</span>
-    <span class="nav-label">Sign-off</span>
+  <button class="nav-tab" data-screen="screen-signoff" onclick="showSection('signoff')">
+    <span class="nav-icon">🖊</span><span class="nav-label">Sign-off</span>
   </button>
 </nav>
 
-<!-- TOAST -->
 <div id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="js/supabase.js"></script>
 <script src="js/app.js"></script>
-<script>
-  // Show/hide bottom nav based on screen
-  const _origShow = show;
-  show = function(screenId) {
-    _origShow(screenId);
-    const nav = document.getElementById('bottom-nav');
-    const hideNav = ['screen-login','screen-complete'].includes(screenId);
-    nav.classList.toggle('hidden', hideNav);
-    // Keep both operator display elements in sync
-    const op = state.operator || '—';
-    ['hdr-assy-no-display','hdr-assy-no-display2','sv-op-display'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = op;
-    });
-  };
-</script>
 </body>
 </html>
