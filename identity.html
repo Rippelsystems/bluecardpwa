@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a1628">
+  <title>Blue Card — RLL Build Card</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* ── CARD LAYOUT matching physical RLL 37/38 card ── */
+    .card-title {
+      text-align: center;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Logo box top right */
+    .logo-box {
+      grid-column: 2;
+      grid-row: 1 / 3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-left: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 12px;
+      background: var(--surface);
+    }
+    .logo-text {
+      text-align: center;
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+    .logo-text span { color: var(--text-dim); font-weight: 400; font-size: 11px; display: block; letter-spacing: 0.1em; }
+
+    /* ── SERIAL FIELD ROW ── */
+    .serial-field-wrap {
+      border-bottom: 1px solid var(--border);
+      padding: 8px 12px;
+    }
+    .serial-field-wrap.right-col {
+      border-left: 1px solid var(--border);
+    }
+    .serial-field-wrap label {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .serial-field-wrap label.yellow { color: #e0b800; }
+    .serial-field-wrap label.white  { color: var(--label); }
+
+    .serial-input-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .serial-input-row input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 4px 2px;
+      outline: none;
+    }
+    .serial-input-row input:focus { border-bottom-color: var(--accent); }
+
+    .cam-btn {
+      background: var(--accent-dim);
+      border: none;
+      border-radius: 6px;
+      color: var(--accent);
+      font-size: 16px;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .cam-btn:active { opacity: 0.7; }
+
+    .serial-thumb {
+      width: 32px;
+      height: 32px;
+      border-radius: 4px;
+      object-fit: cover;
+      display: none;
+      border: 1px solid var(--accent);
+      flex-shrink: 0;
+    }
+
+    /* ── PLAIN FIELD ── */
+    .plain-field-wrap {
+      border-bottom: 1px solid var(--border);
+      padding: 8px 12px;
+    }
+    .plain-field-wrap.right-col { border-left: 1px solid var(--border); }
+    .plain-field-wrap label {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--label);
+      margin-bottom: 4px;
+    }
+    .plain-field-wrap select,
+    .plain-field-wrap input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      padding: 4px 2px;
+      outline: none;
+      -webkit-appearance: none;
+    }
+    .plain-field-wrap select:focus,
+    .plain-field-wrap input:focus { border-bottom-color: var(--accent); }
+
+    /* Trolley row spans full width */
+    .trolley-row {
+      grid-column: span 2;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid var(--border);
+    }
+    .trolley-row .plain-field-wrap:last-child { border-left: 1px solid var(--border); }
+
+    /* ── STATUS BAR ── */
+    .ocr-status {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-align: center;
+      padding: 6px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="card-badge">RLL</span>
+  <span class="title">Build History Card</span>
+  <span class="operator-tag" id="top-operator">OP —</span>
+</div>
+
+<div class="card-title">RLL 37/38 Build History Card</div>
+
+<!-- ══ MAIN CARD GRID ══════════════════════════════════════════════════════ -->
+<div class="card-grid">
+
+  <!-- ROW 1 LEFT: Trolley No -->
+  <div class="plain-field-wrap">
+    <label>Trolley No</label>
+    <select id="inp-trolley-no" onchange="handleTrolleyChange()">
+      <option value="">— Select —</option>
+    </select>
+  </div>
+
+  <!-- ROW 1 RIGHT: Logo (spans 2 rows) -->
+  <div class="logo-box">
+    <div class="logo-text">Rippel<span>effect</span></div>
+  </div>
+
+  <!-- ROW 2 LEFT: Trolley Position -->
+  <div class="plain-field-wrap">
+    <label>Trolley Position</label>
+    <select id="inp-trolley-pos">
+      <option value="">— Select —</option>
+    </select>
+  </div>
+
+  <!-- ROW 3: Launcher Serial (LEFT) — yellow, camera -->
+  <div class="serial-field-wrap">
+    <label class="yellow">Launcher Serial No</label>
+    <div class="serial-input-row">
+      <input type="text" id="inp-launcher-serial" placeholder="Tap 📷 to capture"
+             autocapitalize="characters" spellcheck="false">
+      <img class="serial-thumb" id="thumb-inp-launcher-serial">
+      <button class="cam-btn" onclick="captureSerial('inp-launcher-serial','photo_launcher')" title="Take photo">📷</button>
+    </div>
+  </div>
+
+  <!-- ROW 3 RIGHT: Barrel No — yellow, camera -->
+  <div class="serial-field-wrap right-col">
+    <label class="yellow">Barrel No</label>
+    <div class="serial-input-row">
+      <input type="text" id="inp-barrel-no" placeholder="Tap 📷 to capture"
+             autocapitalize="characters" spellcheck="false">
+      <img class="serial-thumb" id="thumb-inp-barrel-no">
+      <button class="cam-btn" onclick="captureSerial('inp-barrel-no','photo_barrel')" title="Take photo">📷</button>
+    </div>
+  </div>
+
+  <!-- ROW 4 LEFT: Year of Manufacturing -->
+  <div class="plain-field-wrap">
+    <label>Year of Manufacturing</label>
+    <select id="inp-year">
+      <option value="">— Select —</option>
+    </select>
+  </div>
+
+  <!-- ROW 4 RIGHT: Barrel Production No — yellow, camera -->
+  <div class="serial-field-wrap right-col">
+    <label class="yellow">Barrel Production No</label>
+    <div class="serial-input-row">
+      <input type="text" id="inp-barrel-prod-no" placeholder="Tap 📷 to capture"
+             autocapitalize="characters" spellcheck="false">
+      <img class="serial-thumb" id="thumb-inp-barrel-prod-no">
+      <button class="cam-btn" onclick="captureSerial('inp-barrel-prod-no','photo_barrel_prod')" title="Take photo">📷</button>
+    </div>
+  </div>
+
+  <!-- ROW 5 LEFT: Client / Country -->
+  <div class="plain-field-wrap">
+    <label>Client / Country</label>
+    <select id="inp-customer">
+      <option value="">— Select —</option>
+    </select>
+  </div>
+
+  <!-- ROW 5 RIGHT: HRC Serial No — yellow, camera -->
+  <div class="serial-field-wrap right-col">
+    <label class="yellow">HRC Serial No</label>
+    <div class="serial-input-row">
+      <input type="text" id="inp-hrc-serial" placeholder="Tap 📷 to capture"
+             autocapitalize="characters" spellcheck="false">
+      <img class="serial-thumb" id="thumb-inp-hrc-serial">
+      <button class="cam-btn" onclick="captureSerial('inp-hrc-serial','photo_hrc')" title="Take photo">📷</button>
+    </div>
+  </div>
+
+  <!-- ROW 6 LEFT: Cylinder No — yellow, camera -->
+  <div class="serial-field-wrap">
+    <label class="yellow">Cylinder No</label>
+    <div class="serial-input-row">
+      <input type="text" id="inp-cylinder-no" placeholder="Tap 📷 to capture"
+             autocapitalize="characters" spellcheck="false">
+      <img class="serial-thumb" id="thumb-inp-cylinder-no">
+      <button class="cam-btn" onclick="captureSerial('inp-cylinder-no','photo_cylinder')" title="Take photo">📷</button>
+    </div>
+  </div>
+
+  <!-- ROW 6 RIGHT: Firing Mech No — yellow, camera -->
+  <div class="serial-field-wrap right-col">
+    <label class="yellow">Firing Mech No</label>
+    <div class="serial-input-row">
+      <input type="text" id="inp-firing-mech" placeholder="Tap 📷 to capture"
+             autocapitalize="characters" spellcheck="false">
+      <img class="serial-thumb" id="thumb-inp-firing-mech">
+      <button class="cam-btn" onclick="captureSerial('inp-firing-mech','photo_firing_mech')" title="Take photo">📷</button>
+    </div>
+  </div>
+
+  <!-- ROW 7 LEFT: Cylinder Production No — yellow, camera -->
+  <div class="serial-field-wrap">
+    <label class="yellow">Cylinder Production No</label>
+    <div class="serial-input-row">
+      <input type="text" id="inp-cylinder-prod-no" placeholder="Tap 📷 to capture"
+             autocapitalize="characters" spellcheck="false">
+      <img class="serial-thumb" id="thumb-inp-cylinder-prod-no">
+      <button class="cam-btn" onclick="captureSerial('inp-cylinder-prod-no','photo_cylinder_prod')" title="Take photo">📷</button>
+    </div>
+  </div>
+
+  <!-- ROW 7 RIGHT: empty placeholder -->
+  <div class="plain-field-wrap right-col" style="min-height:60px;"></div>
+
+  <!-- ROW 8 LEFT: HFM Serial No — yellow, camera -->
+  <div class="serial-field-wrap">
+    <label class="yellow">HFM Serial No</label>
+    <div class="serial-input-row">
+      <input type="text" id="inp-hfm-serial" placeholder="Tap 📷 to capture"
+             autocapitalize="characters" spellcheck="false">
+      <img class="serial-thumb" id="thumb-inp-hfm-serial">
+      <button class="cam-btn" onclick="captureSerial('inp-hfm-serial','photo_hfm')" title="Take photo">📷</button>
+    </div>
+  </div>
+
+  <!-- ROW 8 RIGHT: empty -->
+  <div class="plain-field-wrap right-col" style="min-height:60px;"></div>
+
+</div><!-- end card-grid -->
+
+<div class="ocr-status" id="ocr-status">📷 Tap camera icon to capture serial number</div>
+
+<div class="action-bar" style="bottom:0;">
+  <button class="btn btn-primary" onclick="saveIdentityAndContinue()">Save & Continue to Checks →</button>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="js/supabase.js"></script>
+<script>
+  // ── Simple shared state via sessionStorage ─────────────────────────
+  const formData = JSON.parse(sessionStorage.getItem('bluecard_form') || '{}');
+  const operator = sessionStorage.getItem('bluecard_operator') || '—';
+  document.getElementById('top-operator').textContent = `OP ${operator}`;
+
+  // ── Boot ───────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    initSupabase();
+    populateTrolley();
+    populateYear();
+    loadCustomers();
+    restoreFields();
+    initOCR();
+  });
+
+  // ── Trolley dropdowns ──────────────────────────────────────────────
+  function populateTrolley() {
+    const tSel = document.getElementById('inp-trolley-no');
+    for (let i = 1; i <= 20; i++) {
+      tSel.innerHTML += `<option value="${i}">Trolley ${i}</option>`;
+    }
+    const pSel = document.getElementById('inp-trolley-pos');
+    for (let i = 1; i <= 56; i++) {
+      pSel.innerHTML += `<option value="${i}">Position ${i}</option>`;
+    }
+    // Auto-suggest next available trolley/position
+    autoSuggestTrolley();
+  }
+
+  async function autoSuggestTrolley() {
+    // Find the last used trolley/position from Supabase
+    const { data } = await supabaseClient
+      .from('weapon_builds')
+      .select('trolley_number, trolley_position')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (data && data.length > 0 && data[0].trolley_number) {
+      let t = data[0].trolley_number;
+      let p = data[0].trolley_position + 1;
+      if (p > 56) { t += 1; p = 1; }
+      if (t > 20) t = 20;
+      document.getElementById('inp-trolley-no').value  = t;
+      document.getElementById('inp-trolley-pos').value = p;
+    } else {
+      document.getElementById('inp-trolley-no').value  = 1;
+      document.getElementById('inp-trolley-pos').value = 1;
+    }
+  }
+
+  function handleTrolleyChange() {
+    // When trolley changes manually, reset position to 1
+    document.getElementById('inp-trolley-pos').value = 1;
+  }
+
+  // ── Year dropdown ──────────────────────────────────────────────────
+  function populateYear() {
+    const sel = document.getElementById('inp-year');
+    const thisYear = new Date().getFullYear();
+    for (let y = thisYear; y <= thisYear + 2; y++) {
+      sel.innerHTML += `<option value="${y}">${y}</option>`;
+    }
+    sel.value = thisYear;
+  }
+
+  // ── Customer dropdown from Supabase ───────────────────────────────
+  async function loadCustomers() {
+    const { data } = await supabaseClient
+      .from('weapon_serials')
+      .select('customer')
+      .order('customer');
+    if (!data) return;
+    const unique = [...new Set(data.map(r => r.customer).filter(Boolean))];
+    const sel = document.getElementById('inp-customer');
+    unique.forEach(c => {
+      sel.innerHTML += `<option value="${c}">${c}</option>`;
+    });
+    if (formData.client_country) sel.value = formData.client_country;
+  }
+
+  // ── Restore previously saved fields ───────────────────────────────
+  function restoreFields() {
+    const map = {
+      'inp-trolley-no':      'trolley_number',
+      'inp-trolley-pos':     'trolley_position',
+      'inp-launcher-serial': 'launcher_serial',
+      'inp-barrel-no':       'barrel_no',
+      'inp-barrel-prod-no':  'barrel_production_no',
+      'inp-hrc-serial':      'hrc_serial_no',
+      'inp-cylinder-no':     'cylinder_no',
+      'inp-firing-mech':     'firing_mech_no',
+      'inp-cylinder-prod-no':'cylinder_production_no',
+      'inp-hfm-serial':      'hfm_serial_no',
+      'inp-year':            'year_of_manufacture',
+      'inp-customer':        'client_country',
+    };
+    Object.entries(map).forEach(([elId, key]) => {
+      const el = document.getElementById(elId);
+      if (el && formData[key]) el.value = formData[key];
+    });
+  }
+
+  // ── Save and continue ──────────────────────────────────────────────
+  function saveIdentityAndContinue() {
+    const map = {
+      'inp-trolley-no':      'trolley_number',
+      'inp-trolley-pos':     'trolley_position',
+      'inp-launcher-serial': 'launcher_serial',
+      'inp-barrel-no':       'barrel_no',
+      'inp-barrel-prod-no':  'barrel_production_no',
+      'inp-hrc-serial':      'hrc_serial_no',
+      'inp-cylinder-no':     'cylinder_no',
+      'inp-firing-mech':     'firing_mech_no',
+      'inp-cylinder-prod-no':'cylinder_production_no',
+      'inp-hfm-serial':      'hfm_serial_no',
+      'inp-year':            'year_of_manufacture',
+      'inp-customer':        'client_country',
+    };
+    Object.entries(map).forEach(([elId, key]) => {
+      const el = document.getElementById(elId);
+      if (el) formData[key] = el.value;
+    });
+    sessionStorage.setItem('bluecard_form', JSON.stringify(formData));
+    showToast('Identity saved ✓', 'ok');
+    setTimeout(() => window.location.href = 'index.html', 800);
+  }
+
+  // ── Camera + OCR ───────────────────────────────────────────────────
+  let tesseractWorker = null;
+
+  async function initOCR() {
+    try {
+      tesseractWorker = await Tesseract.createWorker('eng');
+      await tesseractWorker.setParameters({
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ',
+      });
+      document.getElementById('ocr-status').textContent = '📷 Camera ready — tap icon to capture serial';
+    } catch(e) {
+      document.getElementById('ocr-status').textContent = '⚠ OCR not available — type manually';
+    }
+  }
+
+  async function captureSerial(fieldId, photoKey) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) { document.body.removeChild(input); return; }
+
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        const base64 = ev.target.result;
+        formData[photoKey] = base64;
+
+        // Show thumbnail
+        const thumb = document.getElementById(`thumb-${fieldId}`);
+        if (thumb) { thumb.src = base64; thumb.style.display = 'block'; }
+
+        // OCR
+        const inp = document.getElementById(fieldId);
+        if (inp) { inp.placeholder = 'Reading…'; inp.disabled = true; }
+        document.getElementById('ocr-status').textContent = '🔍 Reading serial number…';
+        showToast('Reading serial…', 'ok');
+
+        try {
+          if (!tesseractWorker) await initOCR();
+          const { data } = await tesseractWorker.recognize(base64);
+          let text = data.text.trim().toUpperCase()
+            .replace(/\n/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (inp) {
+            inp.value = text;
+            inp.disabled = false;
+            inp.style.borderBottomColor = 'var(--warn)';
+            inp.placeholder = 'Confirm or correct';
+          }
+          document.getElementById('ocr-status').textContent = '✓ Serial read — please confirm or correct above';
+          showToast('Read complete — confirm serial ✓', 'ok');
+        } catch(err) {
+          if (inp) { inp.disabled = false; inp.placeholder = 'Type manually'; }
+          document.getElementById('ocr-status').textContent = '⚠ Could not read — please type manually';
+          showToast('OCR failed — type manually', 'warn');
+        }
+      };
+      reader.readAsDataURL(file);
+      document.body.removeChild(input);
+    };
+    input.click();
+  }
+
+  // ── Toast ──────────────────────────────────────────────────────────
+  let toastTimer;
+  function showToast(msg, type='ok') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `toast ${type} visible`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('visible'), 3200);
+  }
+</script>
+</body>
+</html>
