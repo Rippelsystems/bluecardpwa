@@ -44,7 +44,7 @@ function show(screenId) {
   document.querySelectorAll('.nav-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.screen === screenId));
   const nav = document.getElementById('bottom-nav');
-  const hideNav = ['screen-login','screen-resume','screen-complete'].includes(screenId);
+  const hideNav = ['screen-login','screen-complete'].includes(screenId);
   if (nav) nav.classList.toggle('hidden', hideNav);
   // Show/hide switch operator button
   const swBtn = document.getElementById('switch-op-btn');
@@ -80,8 +80,10 @@ function handleLogin() {
   const op = document.getElementById('inp-operator').value.trim();
   if (!op) { showToast('Enter your operator number','error'); return; }
   state.operator = op;
-  document.getElementById('resume-op').textContent = op;
-  document.getElementById('switch-op-label').textContent = `OP ${op}`;
+  const resumeOp = document.getElementById('resume-op');
+  const switchLabel = document.getElementById('switch-op-label');
+  if (resumeOp) resumeOp.textContent = op;
+  if (switchLabel) switchLabel.textContent = `OP ${op}`;
   show('screen-resume');
   loadResumeScreen();
 }
@@ -251,11 +253,15 @@ async function confirmLauncherSerial() {
 }
 
 async function saveIdentity() {
-  if (!state.serialVerified) { showToast('Please confirm launcher serial first','error'); return; }
+  // Collect whatever is filled in — partial saves are allowed
   const map=getIdentityMap();
   Object.entries(map).forEach(([elId,key])=>{
-    const el=document.getElementById(elId); if (el) state.formData[key]=el.value;
+    const el=document.getElementById(elId); if (el && el.value) state.formData[key]=el.value;
   });
+  // Warn if serial not confirmed but still allow save
+  if (!state.serialVerified && state.formData.launcher_serial) {
+    showToast('Saving without confirmed serial — partial save','warn');
+  }
   let result, error;
   if (state.buildId) {
     ({data:result,error}=await supabaseClient.from('weapon_builds')
