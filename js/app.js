@@ -3,7 +3,8 @@ const state = {
   operator: null,
   checks: {},
   formData: {},
-  serialVerified: false
+  serialVerified: false,
+  buildId: null  // Supabase record ID for updates
 };
 
 const RLL_CHECKS = [
@@ -26,13 +27,6 @@ const RLL_CHECKS = [
   { id:'c17', label:'Final visual — no loose components or tooling left' }
 ];
 
-const SECTIONS = [
-  { id:'identity', screen:'screen-identity' },
-  { id:'serial',   screen:'screen-serial'   },
-  { id:'checks',   screen:'screen-checks'   },
-  { id:'signoff',  screen:'screen-signoff'  },
-];
-
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initSupabase();
@@ -45,48 +39,174 @@ function show(screenId) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById(screenId);
   if (el) { el.classList.add('active'); window.scrollTo(0,0); }
-  document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.screen === screenId));
+  document.querySelectorAll('.nav-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.screen === screenId));
   const nav = document.getElementById('bottom-nav');
-  if (nav) nav.classList.toggle('hidden', ['screen-login','screen-complete'].includes(screenId));
+  const hideNav = ['screen-login','screen-resume','screen-complete'].includes(screenId);
+  if (nav) nav.classList.toggle('hidden', hideNav);
 }
 
 function showSection(id) {
-  const sec = SECTIONS.find(s => s.id === id);
-  if (!sec) return;
-  if (id === 'identity') refreshIdentity();
-  if (id === 'checks')   refreshChecks();
-  if (id === 'signoff')  refreshSignoff();
-  show(sec.screen);
+  if (id==='identity') refreshIdentity();
+  if (id==='checks')   refreshChecks();
+  if (id==='signoff')  refreshSignoff();
+  const map = { identity:'screen-identity', checks:'screen-checks', signoff:'screen-signoff' };
+  if (map[id]) show(map[id]);
 }
 
 // ─── LOGIN ─────────────────────────────────────────────────────────────────────
 function handleLogin() {
   const op = document.getElementById('inp-operator').value.trim();
-  if (!op) { showToast('Enter your operator number', 'error'); return; }
+  if (!op) { showToast('Enter your operator number','error'); return; }
   state.operator = op;
-  state.formData = { operator_number: op, card_type: 'RLL', session_start: new Date().toISOString() };
-  showToast(`Session started — Operator ${op}`, 'ok');
-  setTimeout(() => {
-    refreshIdentity();
-    show('screen-identity');
-    document.getElementById('bottom-nav').classList.remove('hidden');
-    populateTrolley();
-    populateYear();
-    loadCustomers();
-    initOCR();
-  }, 400);
+  document.getElementById('resume-op').textContent = op;
+  show('screen-resume');
+  loadResumeScreen();
+}
+
+// ─── RESUME SCREEN ────────────────────────────────────────────────────────────
+async function loadResumeScreen() {
+  // Populate trolley finders
+  const tSel = document.getElementById('inp-find-trolley');
+  const pSel = document.getElementById('inp-find-pos');
+  tSel.innerHTML = '<option value="">Trolley…</option>';
+  pSel.innerHTML = '<option value="">Pos…</option>';
+  for (let i=1;i<=20;i++) tSel.innerHTML += `<option value="${i}">Trolley ${i}</option>`;
+  for (let i=1;i<=56;i++) pSel.innerHTML += `<option value="${i}">Pos ${i}</option>`;
+
+  // Load this operator's incomplete cards
+  const listEl = document.getElementById('my-cards-list');
+  listEl.innerHTML = '<div class="loading-msg">Loading…</div>';
+  try {
+    const { data } = await supabaseClient
+      .from('weapon_builds')
+      .select('id,launcher_serial,trolley_number,trolley_position,client_country,created_at,status')
+      .eq('operator_number', state.operator)
+      .neq('status','COMPLETE')
+      .order('created_at',{ascending:false})
+      .limit(10);
+
+    if (!data || data.length === 0) {
+      listEl.innerHTML = '<div class="loading-msg" style="padding:12px 0;">No incomplete cards — start a new one below</div>';
+    } else {
+      listEl.innerHTML = data.map(r => `
+        <div class="resume-card" onclick="loadBuild('${r.id}')">
+          <div style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--accent);">
+            ${r.launcher_serial || 'No serial yet'}
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:2px;">
+            Trolley ${r.trolley_number||'—'} · Pos ${r.trolley_position||'—'} · ${r.client_country||'—'} · ${formatDate(new Date(r.created_at))}
+          </div>
+        </div>`).join('');
+    }
+  } catch(e) {
+    listEl.innerHTML = '<div class="loading-msg">Could not load cards</div>';
+  }
+}
+
+async function findBySerial() {
+  const serial = document.getElementById('inp-find-serial').value.trim().toUpperCase();
+  if (!serial) { showToast('Enter a serial number','error'); return; }
+  const { data } = await supabaseClient.from('weapon_builds')
+    .select('id').eq('launcher_serial',serial).neq('status','COMPLETE').limit(1);
+  if (data && data.length > 0) loadBuild(data[0].id);
+  else showToast('No incomplete card found for that serial','warn');
+}
+
+async function findByTrolley() {
+  const t = document.getElementById('inp-find-trolley').value;
+  const p = document.getElementById('inp-find-pos').value;
+  if (!t||!p) { showToast('Select trolley and position','error'); return; }
+  const { data } = await supabaseClient.from('weapon_builds')
+    .select('id').eq('trolley_number',t).eq('trolley_position',p).neq('status','COMPLETE').limit(1);
+  if (data && data.length > 0) loadBuild(data[0].id);
+  else showToast('No incomplete card at that position','warn');
+}
+
+async function loadBuild(id) {
+  showToast('Loading build card…','ok');
+  const { data } = await supabaseClient.from('weapon_builds').select('*').eq('id',id).limit(1);
+  if (!data || data.length===0) { showToast('Could not load card','error'); return; }
+  const row = data[0];
+  state.buildId   = row.id;
+  state.formData  = { ...row };
+  state.checks    = row.checks || {};
+  state.serialVerified = !!row.launcher_serial;
+  showToast('Card loaded ✓','ok');
+  refreshIdentity();
+  show('screen-identity');
+  document.getElementById('bottom-nav').classList.remove('hidden');
+  populateTrolley();
+  populateYear();
+  loadCustomers();
+  loadActivityLog(row.launcher_serial);
+  initOCR();
+}
+
+function startNewCard() {
+  state.buildId = null;
+  state.formData = { operator_number: state.operator, card_type:'RLL', status:'IN PROGRESS', session_start:new Date().toISOString() };
+  state.checks = {};
+  state.serialVerified = false;
+  clearFormInputs();
+  refreshIdentity();
+  show('screen-identity');
+  document.getElementById('bottom-nav').classList.remove('hidden');
+  populateTrolley();
+  populateYear();
+  loadCustomers();
+  initOCR();
+}
+
+function goToResume() {
+  state.buildId=null; state.formData={}; state.checks={}; state.serialVerified=false;
+  clearFormInputs();
+  show('screen-resume');
+  loadResumeScreen();
+}
+
+function endSession() {
+  state.operator=null; state.buildId=null; state.formData={}; state.checks={};
+  clearFormInputs();
+  show('screen-login');
+}
+
+function clearFormInputs() {
+  ['inp-launcher-serial','inp-launcher-confirm','inp-barrel-no','inp-barrel-prod-no',
+   'inp-cylinder-no','inp-hrc-serial','inp-cylinder-prod-no','inp-firing-mech',
+   'inp-hfm-serial','inp-qa-operator','inp-qa-note'].forEach(id => {
+    const el=document.getElementById(id); if (el) el.value='';
+  });
+  document.querySelectorAll('.serial-thumb').forEach(t=>{t.style.display='none';t.src='';});
+  const lv=document.getElementById('launcher-verified');
+  const lw=document.getElementById('launcher-confirm-wrap');
+  if (lv) lv.style.display='none';
+  if (lw) lw.style.display='none';
+  const statusEl=document.getElementById('serial-status');
+  if (statusEl) { statusEl.textContent='Not yet verified'; statusEl.className='serial-verified'; }
+  document.getElementById('checks-list').innerHTML='';
+  updateNavBadges();
 }
 
 // ─── IDENTITY ─────────────────────────────────────────────────────────────────
 function refreshIdentity() {
-  const opEl = document.getElementById('id-op');
-  if (opEl) opEl.textContent = state.operator || '—';
-  // Restore saved values
-  const map = getIdentityMap();
-  Object.entries(map).forEach(([elId, key]) => {
-    const el = document.getElementById(elId);
-    if (el && state.formData[key]) el.value = state.formData[key];
+  const opEl=document.getElementById('id-op');
+  if (opEl) opEl.textContent=state.operator||'—';
+  const map=getIdentityMap();
+  Object.entries(map).forEach(([elId,key])=>{
+    const el=document.getElementById(elId);
+    if (el && state.formData[key]) el.value=state.formData[key];
   });
+  // Show verified status if serial already confirmed
+  if (state.serialVerified && state.formData.launcher_serial) {
+    const lv=document.getElementById('launcher-verified');
+    const lw=document.getElementById('launcher-confirm-wrap');
+    if (lv) lv.style.display='block';
+    if (lw) lw.style.display='none';
+  }
+  // Show activity log section if resuming
+  const logWrap=document.getElementById('activity-log-wrap');
+  if (logWrap) logWrap.style.display=state.buildId?'block':'none';
 }
 
 function getIdentityMap() {
@@ -97,109 +217,171 @@ function getIdentityMap() {
     'inp-customer':         'client_country',
     'inp-launcher-serial':  'launcher_serial',
     'inp-barrel-no':        'barrel_no',
-    'inp-cylinder-no':      'cylinder_no',
     'inp-barrel-prod-no':   'barrel_production_no',
-    'inp-cylinder-prod-no': 'cylinder_production_no',
+    'inp-cylinder-no':      'cylinder_no',
     'inp-hrc-serial':       'hrc_serial_no',
+    'inp-cylinder-prod-no': 'cylinder_production_no',
     'inp-hfm-serial':       'hfm_serial_no',
     'inp-firing-mech':      'firing_mech_no',
   };
 }
 
-function saveIdentity() {
-  const map = getIdentityMap();
-  Object.entries(map).forEach(([elId, key]) => {
-    const el = document.getElementById(elId);
-    if (el) state.formData[key] = el.value;
+// Show confirm field when launcher serial is typed/OCR'd
+function resetSerialConfirm() {
+  state.serialVerified = false;
+  const lv=document.getElementById('launcher-verified');
+  const lw=document.getElementById('launcher-confirm-wrap');
+  const val=document.getElementById('inp-launcher-serial').value.trim();
+  if (lv) lv.style.display='none';
+  if (lw) lw.style.display=val.length>2?'block':'none';
+}
+
+async function confirmLauncherSerial() {
+  const s1=document.getElementById('inp-launcher-serial').value.trim().toUpperCase();
+  const s2=document.getElementById('inp-launcher-confirm').value.trim().toUpperCase();
+  if (!s1||!s2) { showToast('Enter serial in both fields','error'); return; }
+  if (s1!==s2)  { showToast('Serials do not match — check and re-enter','error'); return; }
+  // Duplicate check — only on new cards
+  if (!state.buildId) {
+    const isDupe=await checkDuplicateSerial(s1);
+    if (isDupe) { showToast(`DUPLICATE — ${s1} already exists`,'error'); return; }
+  }
+  state.formData.launcher_serial=s1;
+  state.serialVerified=true;
+  const lv=document.getElementById('launcher-verified');
+  const lw=document.getElementById('launcher-confirm-wrap');
+  if (lv) lv.style.display='block';
+  if (lw) lw.style.display='none';
+  showToast('Launcher serial confirmed ✓','ok');
+}
+
+async function saveIdentity() {
+  if (!state.serialVerified) {
+    showToast('Please confirm launcher serial first','error'); return;
+  }
+  const map=getIdentityMap();
+  Object.entries(map).forEach(([elId,key])=>{
+    const el=document.getElementById(elId);
+    if (el) state.formData[key]=el.value;
   });
-  showToast('Identity fields saved ✓', 'ok');
+
+  // Upsert to Supabase
+  let result, error;
+  if (state.buildId) {
+    // Update existing record
+    ({data:result,error} = await supabaseClient.from('weapon_builds')
+      .update({...state.formData, updated_at:new Date().toISOString()})
+      .eq('id',state.buildId).select());
+  } else {
+    // New record
+    ({data:result,error} = await supabaseClient.from('weapon_builds')
+      .insert({...state.formData}).select());
+    if (!error && result && result.length>0) state.buildId=result[0].id;
+  }
+
+  if (error) { console.error(error); showToast('Save failed — check connection','error'); return; }
+
+  // Log the session activity
+  await logActivity('IDENTITY_SAVE', state.formData, null);
+  showToast('Identity saved ✓','ok');
+  loadActivityLog(state.formData.launcher_serial);
+}
+
+// ─── ACTIVITY LOG ─────────────────────────────────────────────────────────────
+async function logActivity(action, fields, checks) {
+  if (!state.formData.launcher_serial) return;
+  try {
+    await supabaseClient.from('weapon_build_sessions').insert({
+      launcher_serial: state.formData.launcher_serial,
+      operator_number: state.operator,
+      action,
+      fields_updated: fields ? JSON.stringify(fields) : null,
+      checks_updated: checks ? JSON.stringify(checks) : null,
+    });
+  } catch(e) { console.warn('Log failed',e); }
+}
+
+async function loadActivityLog(serial) {
+  if (!serial) return;
+  const logEl=document.getElementById('activity-log');
+  if (!logEl) return;
+  try {
+    const {data} = await supabaseClient.from('weapon_build_sessions')
+      .select('operator_number,action,created_at')
+      .eq('launcher_serial',serial)
+      .order('created_at',{ascending:true});
+    if (!data||data.length===0) { logEl.innerHTML='<div style="color:var(--text-dim);font-style:italic;">No activity yet</div>'; return; }
+    logEl.innerHTML = data.map(r=>`
+      <div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);">
+        <span style="font-family:var(--font-mono);color:var(--accent);font-weight:700;">OP ${r.operator_number}</span>
+        <span style="flex:1;">${r.action.replace(/_/g,' ')}</span>
+        <span style="color:var(--text-dim);">${formatDate(new Date(r.created_at))}</span>
+      </div>`).join('');
+  } catch(e) {}
 }
 
 // ─── TROLLEY ──────────────────────────────────────────────────────────────────
 function populateTrolley() {
-  const tSel = document.getElementById('inp-trolley-no');
-  if (!tSel || tSel.options.length > 1) return;
-  tSel.innerHTML = '<option value="">— Select —</option>';
-  for (let i=1; i<=20; i++) tSel.innerHTML += `<option value="${i}">Trolley ${i}</option>`;
-  const pSel = document.getElementById('inp-trolley-pos');
-  pSel.innerHTML = '<option value="">— Select —</option>';
-  for (let i=1; i<=56; i++) pSel.innerHTML += `<option value="${i}">Pos ${i}</option>`;
-  autoSuggestTrolley();
+  const tSel=document.getElementById('inp-trolley-no');
+  if (!tSel||tSel.options.length>1) return;
+  tSel.innerHTML='<option value="">— Select —</option>';
+  for (let i=1;i<=20;i++) tSel.innerHTML+=`<option value="${i}">Trolley ${i}</option>`;
+  const pSel=document.getElementById('inp-trolley-pos');
+  pSel.innerHTML='<option value="">— Select —</option>';
+  for (let i=1;i<=56;i++) pSel.innerHTML+=`<option value="${i}">Pos ${i}</option>`;
+  if (!state.buildId) autoSuggestTrolley();
 }
 
 async function autoSuggestTrolley() {
   try {
-    const { data } = await supabaseClient.from('weapon_builds')
+    const {data}=await supabaseClient.from('weapon_builds')
       .select('trolley_number,trolley_position')
       .not('trolley_number','is',null)
       .order('created_at',{ascending:false}).limit(1);
-    let t=1, p=1;
-    if (data && data.length > 0 && data[0].trolley_number) {
-      t = data[0].trolley_number;
-      p = (data[0].trolley_position||0) + 1;
-      if (p > 56) { t++; p=1; }
-      if (t > 20) t=20;
+    let t=1,p=1;
+    if (data&&data.length>0&&data[0].trolley_number) {
+      t=data[0].trolley_number; p=(data[0].trolley_position||0)+1;
+      if (p>56){t++;p=1;} if (t>20) t=20;
     }
-    document.getElementById('inp-trolley-no').value = t;
-    document.getElementById('inp-trolley-pos').value = p;
-    state.formData.trolley_number   = String(t);
-    state.formData.trolley_position = String(p);
-  } catch(e) {}
+    document.getElementById('inp-trolley-no').value=t;
+    document.getElementById('inp-trolley-pos').value=p;
+    state.formData.trolley_number=String(t);
+    state.formData.trolley_position=String(p);
+  } catch(e){}
 }
 
-function handleTrolleyChange() {
-  document.getElementById('inp-trolley-pos').value = 1;
-}
+function handleTrolleyChange() { document.getElementById('inp-trolley-pos').value=1; }
 
 function populateYear() {
-  const sel = document.getElementById('inp-year');
-  if (!sel || sel.options.length > 1) return;
-  sel.innerHTML = '<option value="">— Select —</option>';
-  const y = new Date().getFullYear();
-  for (let i=y; i<=y+2; i++) sel.innerHTML += `<option value="${i}">${i}</option>`;
-  sel.value = y;
+  const sel=document.getElementById('inp-year');
+  if (!sel||sel.options.length>1) return;
+  sel.innerHTML='<option value="">— Select —</option>';
+  const y=new Date().getFullYear();
+  for (let i=y;i<=y+2;i++) sel.innerHTML+=`<option value="${i}">${i}</option>`;
+  if (!state.formData.year_of_manufacture) sel.value=y;
 }
 
 async function loadCustomers() {
   try {
-    const { data } = await supabaseClient.from('weapon_serials').select('customer').order('customer');
-    const unique = [...new Set((data||[]).map(r=>r.customer).filter(Boolean))];
-    const sel = document.getElementById('inp-customer');
-    sel.innerHTML = '<option value="">— Select —</option>';
-    unique.forEach(c => sel.innerHTML += `<option value="${c}">${c}</option>`);
-    if (state.formData.client_country) sel.value = state.formData.client_country;
-  } catch(e) {}
-}
-
-// ─── SERIAL VERIFY ────────────────────────────────────────────────────────────
-async function handleSerialConfirm() {
-  const e1 = document.getElementById('inp-serial-1').value.trim().toUpperCase();
-  const e2 = document.getElementById('inp-serial-2').value.trim().toUpperCase();
-  if (!e1||!e2) { showToast('Enter serial in both fields','error'); return; }
-  if (e1!==e2)  { showToast('Entries do not match','error'); return; }
-  const btn = document.getElementById('btn-serial-confirm');
-  btn.textContent='Checking…'; btn.disabled=true;
-  const isDupe = await checkDuplicateSerial(e1);
-  btn.textContent='Confirm Serial'; btn.disabled=false;
-  if (isDupe) { showToast(`DUPLICATE — ${e1} already exists`,'error'); return; }
-  state.formData.launcher_serial = e1;
-  state.serialVerified = true;
-  const statusEl = document.getElementById('serial-status');
-  statusEl.textContent = `✓ Verified: ${e1}`;
-  statusEl.className = 'serial-verified ok';
-  showToast('Serial verified ✓','ok');
+    const {data}=await supabaseClient.from('weapon_serials').select('customer').order('customer');
+    const unique=[...new Set((data||[]).map(r=>r.customer).filter(Boolean))];
+    const sel=document.getElementById('inp-customer');
+    sel.innerHTML='<option value="">— Select —</option>';
+    unique.forEach(c=>sel.innerHTML+=`<option value="${c}">${c}</option>`);
+    if (state.formData.client_country) sel.value=state.formData.client_country;
+  } catch(e){}
 }
 
 // ─── CHECKS ───────────────────────────────────────────────────────────────────
 function refreshChecks() {
-  const container = document.getElementById('checks-list');
-  if (container.children.length === RLL_CHECKS.length) {
-    RLL_CHECKS.forEach(c => applyCheckVisual(c.id));
+  const container=document.getElementById('checks-list');
+  if (container.children.length===RLL_CHECKS.length) {
+    RLL_CHECKS.forEach(c=>applyCheckVisual(c.id));
     updateChecksProgress(); return;
   }
-  container.innerHTML = '';
-  RLL_CHECKS.forEach(chk => {
-    const row = document.createElement('div');
+  container.innerHTML='';
+  RLL_CHECKS.forEach(chk=>{
+    const row=document.createElement('div');
     row.className='check-row'; row.id=`chk-row-${chk.id}`;
     row.innerHTML=`<span class="check-label">${chk.label}</span>
       <div class="check-btns">
@@ -213,51 +395,50 @@ function refreshChecks() {
   updateChecksProgress();
 }
 
-function setCheck(id, result) {
-  state.checks[id] = result;
-  applyCheckVisual(id);
-  updateChecksProgress();
-  updateNavBadges();
+function setCheck(id,result) {
+  state.checks[id]=result; applyCheckVisual(id); updateChecksProgress(); updateNavBadges();
 }
 
 function applyCheckVisual(id) {
-  const result = state.checks[id];
-  if (!result) return;
-  const row = document.getElementById(`chk-row-${id}`);
-  if (!row) return;
-  row.setAttribute('data-result', result);
-  row.querySelectorAll('.chk-btn').forEach(b => b.classList.remove('selected'));
-  const cls = result==='PASS'?'pass':result==='FAIL'?'fail':'na';
-  const btn = row.querySelector(`.chk-btn.${cls}`);
-  if (btn) btn.classList.add('selected');
+  const result=state.checks[id]; if (!result) return;
+  const row=document.getElementById(`chk-row-${id}`); if (!row) return;
+  row.setAttribute('data-result',result);
+  row.querySelectorAll('.chk-btn').forEach(b=>b.classList.remove('selected'));
+  const cls=result==='PASS'?'pass':result==='FAIL'?'fail':'na';
+  const btn=row.querySelector(`.chk-btn.${cls}`); if (btn) btn.classList.add('selected');
 }
 
 function updateChecksProgress() {
-  const done=Object.keys(state.checks).length, total=RLL_CHECKS.length;
+  const done=Object.keys(state.checks).length,total=RLL_CHECKS.length;
   const fails=Object.values(state.checks).filter(v=>v==='FAIL').length;
   const el=document.getElementById('checks-progress');
   if (el) el.textContent=`${done}/${total}${fails>0?` · ${fails} FAIL`:''}`;
 }
 
-function saveChecks() {
-  const done=Object.keys(state.checks).length, total=RLL_CHECKS.length;
+async function saveChecks() {
+  const done=Object.keys(state.checks).length,total=RLL_CHECKS.length;
+  // Save checks to Supabase if we have a build record
+  if (state.buildId) {
+    await supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId);
+    await logActivity('CHECKS_SAVE',null,state.checks);
+  }
   showToast(`Progress saved — ${done}/${total} marked`,'ok');
 }
 
 function updateNavBadges() {
   const done=Object.keys(state.checks).length;
   const el=document.getElementById('nav-badge-checks');
-  if (el) { el.textContent=done>0?`${done}/${RLL_CHECKS.length}`:''; el.style.display=done>0?'inline':'none'; }
+  if (el){el.textContent=done>0?`${done}/${RLL_CHECKS.length}`:'';el.style.display=done>0?'inline':'none';}
 }
 
 // ─── SIGNOFF ──────────────────────────────────────────────────────────────────
 function refreshSignoff() {
-  document.getElementById('so-serial').textContent   = state.formData.launcher_serial || '—';
-  document.getElementById('so-operator').textContent = state.operator || '—';
-  document.getElementById('so-date').textContent     = formatDate(new Date());
-  const done=Object.keys(state.checks).length, total=RLL_CHECKS.length;
+  document.getElementById('so-serial').textContent  = state.formData.launcher_serial||'—';
+  document.getElementById('so-trolley').textContent = `${state.formData.trolley_number||'—'} / Pos ${state.formData.trolley_position||'—'}`;
+  document.getElementById('so-client').textContent  = state.formData.client_country||'—';
+  const done=Object.keys(state.checks).length,total=RLL_CHECKS.length;
   const fails=Object.values(state.checks).filter(v=>v==='FAIL').length;
-  document.getElementById('so-checks').textContent = `${done} / ${total}`;
+  document.getElementById('so-checks').textContent=`${done} / ${total}`;
   const fb=document.getElementById('so-fails');
   fb.textContent=fails; fb.className=`badge ${fails>0?'fail':'pass'}`;
   if (state.formData.qa_operator) document.getElementById('inp-qa-operator').value=state.formData.qa_operator;
@@ -265,47 +446,43 @@ function refreshSignoff() {
 }
 
 async function handleSubmit() {
-  const qa = document.getElementById('inp-qa-operator').value.trim();
-  if (!qa) { showToast('QA operator number required','error'); return; }
+  const qa=document.getElementById('inp-qa-operator').value.trim();
+  if (!qa){showToast('QA operator number required','error');return;}
   const btn=document.getElementById('btn-submit');
   btn.textContent='Saving…'; btn.disabled=true;
-  state.formData.qa_operator   = qa;
-  state.formData.qa_note       = document.getElementById('inp-qa-note').value.trim()||null;
-  state.formData.completed_at  = new Date().toISOString();
-  state.formData.checks        = state.checks;
-  state.formData.checks_complete = Object.keys(state.checks).length===RLL_CHECKS.length;
-  const {result,error} = await saveRecord('weapon_builds', state.formData);
+  const updates={
+    qa_operator:qa,
+    qa_note:document.getElementById('inp-qa-note').value.trim()||null,
+    completed_at:new Date().toISOString(),
+    checks:state.checks,
+    checks_complete:Object.keys(state.checks).length===RLL_CHECKS.length,
+    status:'COMPLETE'
+  };
+  let error;
+  if (state.buildId) {
+    ({error}=await supabaseClient.from('weapon_builds').update(updates).eq('id',state.buildId));
+  } else {
+    ({error}=await supabaseClient.from('weapon_builds').insert({...state.formData,...updates}));
+  }
+  // Update serial status in weapon_serials
+  if (!error && state.formData.launcher_serial) {
+    await supabaseClient.from('weapon_serials')
+      .update({status:'COMPLETE'}).eq('serial_number',state.formData.launcher_serial);
+  }
+  await logActivity('QA_SIGNOFF',{qa_operator:qa},state.checks);
   btn.textContent='Submit & Save Build Card'; btn.disabled=false;
-  if (error) { console.error(error); showToast('Save failed — check connection','error'); return; }
+  if (error){console.error(error);showToast('Save failed','error');return;}
   showToast('Build card saved ✓','ok');
-  document.getElementById('done-serial').textContent = state.formData.launcher_serial||'—';
+  document.getElementById('done-serial').textContent=state.formData.launcher_serial||'—';
   setTimeout(()=>show('screen-complete'),800);
-}
-
-// ─── NEW CARD / END SESSION ───────────────────────────────────────────────────
-function startNewCard() {
-  state.formData={operator_number:state.operator,card_type:'RLL',session_start:new Date().toISOString()};
-  state.checks={}; state.serialVerified=false;
-  document.querySelectorAll('input[type="text"],textarea').forEach(el=>el.value='');
-  document.getElementById('serial-status').textContent='Not yet verified';
-  document.getElementById('serial-status').className='serial-verified';
-  document.getElementById('checks-list').innerHTML='';
-  updateNavBadges();
-  refreshIdentity();
-  show('screen-identity');
-}
-
-function endSession() {
-  state.operator=null; startNewCard(); show('screen-login');
 }
 
 // ─── CAMERA + OCR ─────────────────────────────────────────────────────────────
 let tesseractWorker=null;
-
 async function initOCR() {
   try {
-    tesseractWorker = await Tesseract.createWorker('eng');
-    await tesseractWorker.setParameters({ tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ' });
+    tesseractWorker=await Tesseract.createWorker('eng');
+    await tesseractWorker.setParameters({tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- '});
     const el=document.getElementById('ocr-status');
     if (el) el.textContent='📷 Camera ready — tap icon next to any yellow serial field';
   } catch(e) {
@@ -314,21 +491,21 @@ async function initOCR() {
   }
 }
 
-async function captureSerial(fieldId, photoKey) {
+async function captureSerial(fieldId,photoKey) {
   const input=document.createElement('input');
   input.type='file'; input.accept='image/*'; input.capture='environment';
   input.style.display='none'; document.body.appendChild(input);
   input.onchange=async(e)=>{
     const file=e.target.files[0];
-    if (!file) { document.body.removeChild(input); return; }
+    if (!file){document.body.removeChild(input);return;}
     const reader=new FileReader();
     reader.onload=async(ev)=>{
       const base64=ev.target.result;
       state.formData[photoKey]=base64;
       const thumb=document.getElementById(`thumb-${fieldId}`);
-      if (thumb) { thumb.src=base64; thumb.style.display='block'; }
+      if (thumb){thumb.src=base64;thumb.style.display='block';}
       const inp=document.getElementById(fieldId);
-      if (inp) { inp.placeholder='Reading…'; inp.disabled=true; }
+      if (inp){inp.placeholder='Reading…';inp.disabled=true;}
       const statusEl=document.getElementById('ocr-status');
       if (statusEl) statusEl.textContent='🔍 Reading serial number…';
       showToast('Reading serial…','ok');
@@ -336,12 +513,13 @@ async function captureSerial(fieldId, photoKey) {
         if (!tesseractWorker) await initOCR();
         const {data}=await tesseractWorker.recognize(base64);
         let text=data.text.trim().toUpperCase().replace(/\n/g,' ').replace(/\s+/g,' ').trim();
-        if (inp) { inp.value=text; inp.disabled=false; inp.style.borderBottomColor='var(--warn)'; inp.placeholder='Confirm or correct'; }
-        state.formData[fieldId.replace('inp-','').replace(/-/g,'_')]=text;
-        if (statusEl) statusEl.textContent='✓ Read complete — please confirm or correct the value';
+        if (inp){inp.value=text;inp.disabled=false;inp.placeholder='Confirm or correct';}
+        if (statusEl) statusEl.textContent='✓ Read complete — confirm or correct the value above';
+        // Show confirm field for launcher serial
+        if (fieldId==='inp-launcher-serial') resetSerialConfirm();
         showToast('Done — confirm serial ✓','ok');
       } catch(err) {
-        if (inp) { inp.disabled=false; inp.placeholder='Type manually'; }
+        if (inp){inp.disabled=false;inp.placeholder='Type manually';}
         if (statusEl) statusEl.textContent='⚠ Could not read — type manually';
         showToast('OCR failed — type manually','warn');
       }
@@ -353,10 +531,10 @@ async function captureSerial(fieldId, photoKey) {
 }
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
-function formatDate(d) { return d.toLocaleDateString('en-ZA',{day:'2-digit',month:'short',year:'numeric'}); }
+function formatDate(d){return new Date(d).toLocaleDateString('en-ZA',{day:'2-digit',month:'short',year:'numeric'});}
 
 let toastTimer;
-function showToast(msg,type='ok') {
+function showToast(msg,type='ok'){
   const t=document.getElementById('toast');
   t.textContent=msg; t.className=`toast ${type} visible`;
   clearTimeout(toastTimer);
