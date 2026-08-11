@@ -167,6 +167,13 @@ function endSession() {
   show('screen-login');
 }
 
+function changeCardType() {
+  // Go back to login screen to pick a different card type or operator
+  state.operator=null; state.buildId=null; state.formData={}; state.checks={};
+  state.serialVerified=false;
+  show('screen-login');
+}
+
 // ─── IDENTITY GRID (dynamic per card type) ────────────────────────────────────
 function buildIdentityGrid() {
   const grid = document.getElementById('identity-fields-grid');
