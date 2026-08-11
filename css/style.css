@@ -207,27 +207,62 @@ textarea { resize: vertical; min-height: 72px; }
 .check-row {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 11px 13px;
-  margin-bottom: 8px;
+  border-radius: 10px;
+  padding: 12px 13px;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  transition: box-shadow 0.15s;
 }
-.check-row[data-result="PASS"] { border-color: var(--pass); background: #f0faf5; }
-.check-row[data-result="FAIL"] { border-color: var(--fail); background: #fdf2f2; }
-.check-row[data-result="N/A"]  { border-color: var(--na);   opacity: 0.6; }
-.check-label { display: block; font-size: 13px; color: var(--text); margin-bottom: 9px; line-height: 1.4; }
+.check-row[data-result="PASS"] { border-color: var(--pass); background: #f0faf5; box-shadow: 0 2px 8px rgba(26,158,92,0.15); }
+.check-row[data-result="FAIL"] { border-color: var(--fail); background: #fdf2f2; box-shadow: 0 2px 8px rgba(217,48,37,0.15); }
+.check-row[data-result="N/A"]  { border-color: var(--na); opacity: 0.6; }
+.check-label { display: block; font-size: 13px; color: var(--text); margin-bottom: 10px; line-height: 1.4; }
 .check-btns  { display: flex; gap: 8px; }
 .chk-btn {
-  flex: 1; padding: 7px 4px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text-dim);
-  font-size: 11px; font-weight: 700;
-  letter-spacing: 0.08em; cursor: pointer;
+  flex: 1; padding: 10px 4px;
+  border: none;
+  border-radius: 8px;
+  font-size: 12px; font-weight: 800;
+  letter-spacing: 0.06em; cursor: pointer;
+  transition: transform 0.08s, box-shadow 0.08s;
+  -webkit-tap-highlight-color: transparent;
 }
-.chk-btn.pass.selected { background: var(--pass); border-color: var(--pass); color: #fff; }
-.chk-btn.fail.selected { background: var(--fail); border-color: var(--fail); color: #fff; }
-.chk-btn.na.selected   { background: var(--na);   border-color: var(--na);   color: #fff; }
+/* Unselected — raised tactile look */
+.chk-btn.pass {
+  background: linear-gradient(180deg, #f8fdf9 0%, #e4f2e8 100%);
+  color: #2d7a4a;
+  box-shadow: 0 4px 0 #a8d4b8, 0 1px 3px rgba(0,0,0,0.1);
+}
+.chk-btn.fail {
+  background: linear-gradient(180deg, #fdf8f8 0%, #f2e4e4 100%);
+  color: #8a2020;
+  box-shadow: 0 4px 0 #d4a8a8, 0 1px 3px rgba(0,0,0,0.1);
+}
+.chk-btn.na {
+  background: linear-gradient(180deg, #f8f9fc 0%, #e8ecf2 100%);
+  color: #5a6a82;
+  box-shadow: 0 4px 0 #b8c4d4, 0 1px 3px rgba(0,0,0,0.1);
+}
+/* Selected — pressed in, glowing */
+.chk-btn.pass.selected {
+  background: linear-gradient(180deg, #20c070 0%, #15a055 100%);
+  color: #fff;
+  box-shadow: 0 1px 0 #0a6a35, inset 0 2px 4px rgba(0,0,0,0.2);
+  transform: translateY(3px);
+}
+.chk-btn.fail.selected {
+  background: linear-gradient(180deg, #e83030 0%, #c01818 100%);
+  color: #fff;
+  box-shadow: 0 1px 0 #800808, inset 0 2px 4px rgba(0,0,0,0.2);
+  transform: translateY(3px);
+}
+.chk-btn.na.selected {
+  background: linear-gradient(180deg, #8a9ab5 0%, #6b7e99 100%);
+  color: #fff;
+  box-shadow: 0 1px 0 #4a5a72, inset 0 2px 4px rgba(0,0,0,0.2);
+  transform: translateY(3px);
+}
+.chk-btn:active { transform: translateY(4px) !important; box-shadow: none !important; }
 
 /* ─── SERIAL VERIFY ───────────────────────────────────────────────────────── */
 .serial-verified {
@@ -320,11 +355,14 @@ textarea { resize: vertical; min-height: 72px; }
 }
 .nav-icon  { font-size: 18px; line-height: 1; }
 .nav-label { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; }
+/* Badge sits BELOW the icon, above the label — no overlap */
 .nav-badge {
-  position: absolute; top: 5px; right: calc(50% - 20px);
+  display: inline-block;
   background: var(--accent); color: #fff;
   font-size: 9px; font-weight: 700;
-  padding: 1px 5px; border-radius: 10px; line-height: 1.4;
+  padding: 1px 6px; border-radius: 10px; line-height: 1.5;
+  margin-top: 1px;
+  position: static;
 }
 
 /* ─── ACTION BAR ──────────────────────────────────────────────────────────── */
