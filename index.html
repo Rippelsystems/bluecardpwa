@@ -17,8 +17,7 @@
 <!-- ══ LOGIN ════════════════════════════════════════════════════════════════ -->
 <section id="screen-login" class="screen active">
   <div class="login-logo">
-    <img id="login-logo-img" src="rippel_logo.png" alt="Rippel Effect"
-         style="width:180px;margin-bottom:16px;filter:brightness(0) invert(1);">
+    <img id="login-logo-img" alt="Rippel Effect" style="width:200px;margin-bottom:16px;border-radius:6px;">
     <div class="logo-badge">Blue Card Digital</div>
     <h1>Build Card<br>System</h1>
   </div>
@@ -88,7 +87,7 @@
 
       <!-- LOGO ROW -->
       <div style="display:flex;justify-content:flex-end;padding:8px 12px;border-bottom:1px solid var(--border);">
-        <img src="rippel_logo.png" alt="Rippel Effect" style="height:48px;object-fit:contain;">
+        <img class="rippel-logo-main" alt="Rippel Effect" style="height:48px;object-fit:contain;">
       </div>
 
       <!-- IDENTITY FIELDS GRID -->
@@ -163,7 +162,7 @@
 
     <!-- Logo on sign-off too -->
     <div style="text-align:right;margin-bottom:12px;">
-      <img src="rippel_logo.png" alt="Rippel Effect" style="height:36px;object-fit:contain;">
+      <img class="rippel-logo-main" alt="Rippel Effect" style="height:36px;object-fit:contain;">
     </div>
 
     <div class="card-box" style="margin-bottom:14px;">
@@ -219,7 +218,7 @@
 <!-- ══ COMPLETE ══════════════════════════════════════════════════════════════ -->
 <section id="screen-complete" class="screen"
          style="justify-content:center;align-items:center;text-align:center;padding:32px 24px;">
-  <img src="rippel_logo.png" alt="Rippel Effect" style="width:160px;margin-bottom:24px;opacity:0.8;">
+  <img class="rippel-logo-main" alt="Rippel Effect" style="width:160px;margin-bottom:24px;opacity:0.9;">
   <div class="complete-icon">✅</div>
   <h2>Build Card Saved</h2>
   <div class="complete-serial" id="done-serial"></div>
@@ -265,5 +264,21 @@
 <script src="js/logo.js"></script>
 <script src="js/cardconfig.js"></script>
 <script src="js/app.js"></script>
+
+<script>
+// Set logos immediately after logo.js loads
+(function() {
+  function setLogos() {
+    if (typeof RIPPEL_LOGO === 'undefined') { setTimeout(setLogos, 50); return; }
+    var loginLogo = document.getElementById('login-logo-img');
+    if (loginLogo) loginLogo.src = RIPPEL_LOGO_BANNER;
+    document.querySelectorAll('.rippel-logo-main').forEach(function(img) {
+      img.src = RIPPEL_LOGO;
+    });
+  }
+  setLogos();
+})();
+</script>
+
 </body>
 </html>
