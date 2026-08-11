@@ -17,7 +17,7 @@
 <!-- ══ LOGIN ════════════════════════════════════════════════════════════════ -->
 <section id="screen-login" class="screen active">
   <div class="login-logo">
-    <img id="login-logo-img" src="icons/rippel_logo.png" alt="Rippel Effect"
+    <img id="login-logo-img" src="rippel_logo.png" alt="Rippel Effect"
          style="width:180px;margin-bottom:16px;filter:brightness(0) invert(1);">
     <div class="logo-badge">Blue Card Digital</div>
     <h1>Build Card<br>System</h1>
@@ -71,6 +71,7 @@
     <button class="btn btn-secondary" onclick="findByTrolley()">Find by Trolley / Position</button>
     <div class="divider"></div>
     <button class="btn btn-primary" onclick="startNewCard()">+ Start New Build Card</button>
+    <button class="btn btn-secondary" style="margin-top:8px;" onclick="changeCardType()">🔄 Change Card Type / End Session</button>
   </div>
 </section>
 
@@ -87,7 +88,7 @@
 
       <!-- LOGO ROW -->
       <div style="display:flex;justify-content:flex-end;padding:8px 12px;border-bottom:1px solid var(--border);">
-        <img src="icons/rippel_logo.png" alt="Rippel Effect" style="height:48px;object-fit:contain;">
+        <img src="rippel_logo.png" alt="Rippel Effect" style="height:48px;object-fit:contain;">
       </div>
 
       <!-- IDENTITY FIELDS GRID -->
@@ -162,7 +163,7 @@
 
     <!-- Logo on sign-off too -->
     <div style="text-align:right;margin-bottom:12px;">
-      <img src="icons/rippel_logo.png" alt="Rippel Effect" style="height:36px;object-fit:contain;">
+      <img src="rippel_logo.png" alt="Rippel Effect" style="height:36px;object-fit:contain;">
     </div>
 
     <div class="card-box" style="margin-bottom:14px;">
@@ -218,7 +219,7 @@
 <!-- ══ COMPLETE ══════════════════════════════════════════════════════════════ -->
 <section id="screen-complete" class="screen"
          style="justify-content:center;align-items:center;text-align:center;padding:32px 24px;">
-  <img src="icons/rippel_logo.png" alt="Rippel Effect" style="width:160px;margin-bottom:24px;opacity:0.8;">
+  <img src="rippel_logo.png" alt="Rippel Effect" style="width:160px;margin-bottom:24px;opacity:0.8;">
   <div class="complete-icon">✅</div>
   <h2>Build Card Saved</h2>
   <div class="complete-serial" id="done-serial"></div>
@@ -261,6 +262,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="js/supabase.js"></script>
+<script src="js/logo.js"></script>
 <script src="js/cardconfig.js"></script>
 <script src="js/app.js"></script>
 </body>
