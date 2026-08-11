@@ -246,19 +246,50 @@
       <tr><td>Failed Checks</td><td><span class="badge" id="so-fails">0</span></td></tr>
     </table>
     <div class="divider"></div>
-    <div class="field-group">
-      <label>QA Operator Number *</label>
-      <input type="text" id="inp-qa-operator" placeholder="QA operator number" inputmode="numeric" autocomplete="off">
+
+    <!-- Factory Acceptance Test -->
+    <div class="card-box" style="margin-bottom:14px;">
+      <div class="card-box-title">Factory Acceptance Test</div>
+      <div style="padding:12px;">
+        <div class="field-group">
+          <label>FAT Name *</label>
+          <input type="text" id="inp-fat-name" placeholder="Full name" autocomplete="off">
+        </div>
+        <div class="field-group">
+          <label>FAT Date</label>
+          <input type="date" id="inp-fat-date">
+        </div>
+      </div>
     </div>
-    <div class="field-group">
-      <label>QA Notes (optional)</label>
-      <textarea id="inp-qa-note" placeholder="Observations, NCRs, comments…"></textarea>
+
+    <!-- Quality Assurance -->
+    <div class="card-box" style="margin-bottom:14px;">
+      <div class="card-box-title">Quality Assurance</div>
+      <div style="padding:12px;">
+        <div class="field-group">
+          <label>QA Operator Number *</label>
+          <input type="text" id="inp-qa-operator" placeholder="QA operator number" inputmode="numeric" autocomplete="off">
+        </div>
+        <div class="field-group">
+          <label>QA Notes (optional)</label>
+          <textarea id="inp-qa-note" placeholder="Observations, NCRs, comments…"></textarea>
+        </div>
+      </div>
     </div>
   </div>
   <div class="action-bar">
     <button class="btn btn-primary" id="btn-submit" onclick="handleSubmit()">Submit &amp; Save Build Card</button>
   </div>
 </section>
+
+<!-- ══ SWITCH OPERATOR BUTTON ════════════════════════════════════════════════ -->
+<div id="switch-op-btn" style="display:none;position:fixed;top:10px;right:12px;z-index:30;">
+  <button onclick="showSwitchOperator()"
+          style="background:#1a2236;border:1px solid #3a5080;color:#8fa3c0;
+                 font-size:11px;font-weight:700;padding:5px 10px;border-radius:6px;cursor:pointer;">
+    🔄 <span id="switch-op-label">OP —</span>
+  </button>
+</div>
 
 <!-- ══ COMPLETE ══════════════════════════════════════════════════════════════ -->
 <section id="screen-complete" class="screen" style="justify-content:center;align-items:center;text-align:center;padding:32px 24px;">
