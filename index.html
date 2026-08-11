@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1a2236">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Blue Card — RLL Build Card</title>
+  <title>Blue Card Digital</title>
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
@@ -17,11 +17,20 @@
 <!-- ══ LOGIN ════════════════════════════════════════════════════════════════ -->
 <section id="screen-login" class="screen active">
   <div class="login-logo">
+    <img id="login-logo-img" src="icons/rippel_logo.png" alt="Rippel Effect"
+         style="width:180px;margin-bottom:16px;filter:brightness(0) invert(1);">
     <div class="logo-badge">Blue Card Digital</div>
     <h1>Build Card<br>System</h1>
-    <p>RLL 37/38 · Operator session login</p>
   </div>
   <div class="login-card">
+    <div class="field-group">
+      <label for="inp-card-type">Card Type</label>
+      <select id="inp-card-type" style="font-size:15px;color:#111;background:#f2f4f7;">
+        <option value="RLL">RLL 37/38</option>
+        <option value="XRGL40">XRGL40</option>
+        <option value="GRN40">GRN40</option>
+      </select>
+    </div>
     <div class="field-group">
       <label for="inp-operator">Operator Number</label>
       <input type="text" id="inp-operator" placeholder="e.g. 042" inputmode="numeric" autocomplete="off">
@@ -31,32 +40,23 @@
   </div>
 </section>
 
-<!-- ══ RESUME SCREEN ═════════════════════════════════════════════════════════ -->
+<!-- ══ RESUME ════════════════════════════════════════════════════════════════ -->
 <section id="screen-resume" class="screen">
   <div class="topbar">
-    <span class="card-badge">RLL</span>
+    <span class="card-badge" id="resume-card-badge">RLL</span>
     <span class="title">Resume or New Card</span>
     <span class="operator-tag">OP <span id="resume-op">—</span></span>
   </div>
   <div class="content">
-
-    <!-- My incomplete cards -->
     <div class="section-head"><span class="section-num">A</span><h2>My Incomplete Cards</h2></div>
-    <div id="my-cards-list">
-      <div class="loading-msg">Loading…</div>
-    </div>
-
+    <div id="my-cards-list"><div class="loading-msg">Loading…</div></div>
     <div class="divider"></div>
-
-    <!-- Find by serial -->
     <div class="section-head"><span class="section-num">B</span><h2>Find by Launcher Serial</h2></div>
     <div style="display:flex;gap:8px;margin-bottom:16px;">
-      <input type="text" id="inp-find-serial" placeholder="e.g. RLL 26004" autocapitalize="characters"
-             style="flex:1;" spellcheck="false">
+      <input type="text" id="inp-find-serial" placeholder="e.g. RLL 26004"
+             autocapitalize="characters" style="flex:1;" spellcheck="false">
       <button class="btn btn-primary" style="width:auto;padding:11px 16px;" onclick="findBySerial()">Find</button>
     </div>
-
-    <!-- Find by trolley -->
     <div class="section-head"><span class="section-num">C</span><h2>Find by Trolley</h2></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
       <div class="field-group" style="margin:0;">
@@ -69,7 +69,6 @@
       </div>
     </div>
     <button class="btn btn-secondary" onclick="findByTrolley()">Find by Trolley / Position</button>
-
     <div class="divider"></div>
     <button class="btn btn-primary" onclick="startNewCard()">+ Start New Build Card</button>
   </div>
@@ -78,127 +77,24 @@
 <!-- ══ IDENTITY ══════════════════════════════════════════════════════════════ -->
 <section id="screen-identity" class="screen">
   <div class="topbar">
-    <span class="card-badge">RLL</span>
-    <span class="title">Build History Card</span>
+    <span class="card-badge" id="id-card-badge">RLL</span>
+    <span class="title" id="id-title">Build History Card</span>
     <span class="operator-tag">OP <span id="id-op">—</span></span>
   </div>
   <div class="content">
     <div class="card-box">
-      <div class="card-box-title">RLL 37/38 Build History Card</div>
-      <div class="card-grid">
+      <div class="card-box-title" id="card-main-title">RLL 37/38 BUILD HISTORY CARD</div>
 
-        <!-- Trolley + Logo -->
-        <div class="card-cell">
-          <label>Trolley No</label>
-          <select id="inp-trolley-no" onchange="handleTrolleyChange()"></select>
-        </div>
-        <div class="card-cell" style="display:flex;align-items:center;justify-content:flex-end;">
-          <div class="logo-text">Rippel<span>effect</span></div>
-        </div>
+      <!-- LOGO ROW -->
+      <div style="display:flex;justify-content:flex-end;padding:8px 12px;border-bottom:1px solid var(--border);">
+        <img src="icons/rippel_logo.png" alt="Rippel Effect" style="height:48px;object-fit:contain;">
+      </div>
 
-        <div class="card-cell">
-          <label>Trolley Position</label>
-          <select id="inp-trolley-pos"></select>
-        </div>
-        <div class="card-cell">
-          <label>Year of Manufacturing</label>
-          <select id="inp-year"></select>
-        </div>
+      <!-- IDENTITY FIELDS GRID -->
+      <div class="card-grid" id="identity-fields-grid">
+        <!-- Populated dynamically based on card type -->
+      </div>
 
-        <div class="card-cell span2">
-          <label>Client / Country</label>
-          <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;"></select>
-        </div>
-
-        <!-- Launcher Serial — with confirm field -->
-        <div class="card-cell span2">
-          <label class="yellow">Launcher Serial No ★</label>
-          <div class="serial-row">
-            <input type="text" id="inp-launcher-serial" placeholder="Tap 📷 or type"
-                   autocapitalize="characters" spellcheck="false" onchange="resetSerialConfirm()">
-            <img class="serial-thumb" id="thumb-inp-launcher-serial">
-            <button class="cam-btn" onclick="captureSerial('inp-launcher-serial','photo_launcher')">📷</button>
-          </div>
-          <!-- Confirm field appears after OCR or typing -->
-          <div id="launcher-confirm-wrap" style="margin-top:6px;display:none;">
-            <label style="color:var(--warn);font-size:10px;font-weight:700;letter-spacing:0.07em;display:block;margin-bottom:3px;">CONFIRM LAUNCHER SERIAL</label>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <input type="text" id="inp-launcher-confirm" placeholder="Re-type to confirm"
-                     autocapitalize="characters" spellcheck="false"
-                     style="flex:1;border-bottom:1px solid var(--warn)!important;">
-              <button class="cam-btn" style="background:#fff3e0;border-color:var(--warn);color:var(--warn);"
-                      onclick="confirmLauncherSerial()">✓</button>
-            </div>
-          </div>
-          <div id="launcher-verified" style="display:none;font-size:11px;color:var(--pass);font-weight:700;margin-top:4px;">✓ Serial verified</div>
-        </div>
-
-        <!-- Barrel No | Barrel Production No -->
-        <div class="card-cell">
-          <label class="yellow">Barrel No</label>
-          <div class="serial-row">
-            <input type="text" id="inp-barrel-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-            <img class="serial-thumb" id="thumb-inp-barrel-no">
-            <button class="cam-btn" onclick="captureSerial('inp-barrel-no','photo_barrel')">📷</button>
-          </div>
-        </div>
-        <div class="card-cell">
-          <label class="yellow">Barrel Production No</label>
-          <div class="serial-row">
-            <input type="text" id="inp-barrel-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-            <img class="serial-thumb" id="thumb-inp-barrel-prod-no">
-            <button class="cam-btn" onclick="captureSerial('inp-barrel-prod-no','photo_barrel_prod')">📷</button>
-          </div>
-        </div>
-
-        <!-- Cylinder No | HRC Serial No -->
-        <div class="card-cell">
-          <label class="yellow">Cylinder No</label>
-          <div class="serial-row">
-            <input type="text" id="inp-cylinder-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-            <img class="serial-thumb" id="thumb-inp-cylinder-no">
-            <button class="cam-btn" onclick="captureSerial('inp-cylinder-no','photo_cylinder')">📷</button>
-          </div>
-        </div>
-        <div class="card-cell">
-          <label class="yellow">HRC Serial No</label>
-          <div class="serial-row">
-            <input type="text" id="inp-hrc-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-            <img class="serial-thumb" id="thumb-inp-hrc-serial">
-            <button class="cam-btn" onclick="captureSerial('inp-hrc-serial','photo_hrc')">📷</button>
-          </div>
-        </div>
-
-        <!-- Cylinder Production No | Firing Mech No -->
-        <div class="card-cell">
-          <label class="yellow">Cylinder Production No</label>
-          <div class="serial-row">
-            <input type="text" id="inp-cylinder-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-            <img class="serial-thumb" id="thumb-inp-cylinder-prod-no">
-            <button class="cam-btn" onclick="captureSerial('inp-cylinder-prod-no','photo_cylinder_prod')">📷</button>
-          </div>
-        </div>
-        <div class="card-cell">
-          <label class="yellow">Firing Mech No</label>
-          <div class="serial-row">
-            <input type="text" id="inp-firing-mech" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-            <img class="serial-thumb" id="thumb-inp-firing-mech">
-            <button class="cam-btn" onclick="captureSerial('inp-firing-mech','photo_firing_mech')">📷</button>
-          </div>
-        </div>
-
-        <!-- HFM Serial No -->
-        <div class="card-cell">
-          <label class="yellow">HFM Serial No</label>
-          <div class="serial-row">
-            <input type="text" id="inp-hfm-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-            <img class="serial-thumb" id="thumb-inp-hfm-serial">
-            <button class="cam-btn" onclick="captureSerial('inp-hfm-serial','photo_hfm')">📷</button>
-          </div>
-        </div>
-        <div class="card-cell"></div>
-
-      </div><!-- end card-grid -->
       <div class="ocr-status" id="ocr-status">📷 Tap camera icon next to any yellow field to capture serial</div>
     </div>
 
@@ -207,8 +103,24 @@
       <div class="section-head" style="margin-bottom:8px;"><span class="section-num">LOG</span><h2>Build Activity</h2></div>
       <div id="activity-log" style="font-size:12px;color:var(--text-dim);"></div>
     </div>
-  </div>
 
+    <!-- ISO DOC REF -->
+    <div id="doc-ref-bar" style="margin-top:12px;background:var(--surface);border:1px solid var(--border);
+         border-radius:var(--radius);display:grid;grid-template-columns:1fr 1fr 1fr;text-align:center;overflow:hidden;">
+      <div style="padding:7px;border-right:1px solid var(--border);font-size:11px;">
+        <div style="color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:0.07em;">Doc No</div>
+        <div style="font-weight:700;font-family:var(--font-mono);" id="doc-no">—</div>
+      </div>
+      <div style="padding:7px;border-right:1px solid var(--border);font-size:11px;">
+        <div style="color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:0.07em;">Revision</div>
+        <div style="font-weight:700;" id="doc-rev">—</div>
+      </div>
+      <div style="padding:7px;font-size:11px;">
+        <div style="color:var(--text-dim);font-size:9px;text-transform:uppercase;letter-spacing:0.07em;">Date</div>
+        <div style="font-weight:700;" id="doc-date">—</div>
+      </div>
+    </div>
+  </div>
   <div class="action-bar">
     <button class="btn btn-primary" onclick="saveIdentity()">Save Identity Fields</button>
   </div>
@@ -217,12 +129,12 @@
 <!-- ══ CHECKS ════════════════════════════════════════════════════════════════ -->
 <section id="screen-checks" class="screen">
   <div class="topbar">
-    <span class="card-badge">RLL</span>
-    <span class="title">Inspection Checks</span>
-    <span class="step-indicator" id="checks-progress">0 / 17</span>
+    <span class="card-badge" id="checks-card-badge">RLL</span>
+    <span class="title" id="checks-title">Inspection Checks</span>
+    <span class="step-indicator" id="checks-progress">0 / 18</span>
   </div>
   <div class="content">
-    <div class="section-head"><span class="section-num">03</span><h2>17 Inspection Points</h2></div>
+    <div class="section-head"><span class="section-num">03</span><h2 id="checks-heading">Inspection Points</h2></div>
     <div id="checks-list"></div>
   </div>
   <div class="action-bar">
@@ -233,12 +145,13 @@
 <!-- ══ SIGN-OFF ══════════════════════════════════════════════════════════════ -->
 <section id="screen-signoff" class="screen">
   <div class="topbar">
-    <span class="card-badge">RLL</span>
+    <span class="card-badge" id="signoff-card-badge">RLL</span>
     <span class="title">QA Sign-off</span>
   </div>
   <div class="content">
     <div class="section-head"><span class="section-num">04</span><h2>Quality Assurance</h2></div>
     <table class="summary-table">
+      <tr><td>Card Type</td><td id="so-cardtype">—</td></tr>
       <tr><td>Launcher Serial</td><td id="so-serial">—</td></tr>
       <tr><td>Trolley / Position</td><td id="so-trolley">—</td></tr>
       <tr><td>Client</td><td id="so-client">—</td></tr>
@@ -247,7 +160,11 @@
     </table>
     <div class="divider"></div>
 
-    <!-- Factory Acceptance Test -->
+    <!-- Logo on sign-off too -->
+    <div style="text-align:right;margin-bottom:12px;">
+      <img src="icons/rippel_logo.png" alt="Rippel Effect" style="height:36px;object-fit:contain;">
+    </div>
+
     <div class="card-box" style="margin-bottom:14px;">
       <div class="card-box-title">Factory Acceptance Test</div>
       <div style="padding:12px;">
@@ -262,7 +179,6 @@
       </div>
     </div>
 
-    <!-- Quality Assurance -->
     <div class="card-box" style="margin-bottom:14px;">
       <div class="card-box-title">Quality Assurance</div>
       <div style="padding:12px;">
@@ -276,13 +192,44 @@
         </div>
       </div>
     </div>
+
+    <!-- ISO doc ref on sign-off -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+         display:grid;grid-template-columns:1fr 1fr 1fr;text-align:center;overflow:hidden;margin-top:8px;">
+      <div style="padding:7px;border-right:1px solid var(--border);font-size:11px;">
+        <div style="color:var(--text-dim);font-size:9px;text-transform:uppercase;">Doc No</div>
+        <div style="font-weight:700;font-family:var(--font-mono);" id="so-doc-no">—</div>
+      </div>
+      <div style="padding:7px;border-right:1px solid var(--border);font-size:11px;">
+        <div style="color:var(--text-dim);font-size:9px;text-transform:uppercase;">Revision</div>
+        <div style="font-weight:700;" id="so-doc-rev">—</div>
+      </div>
+      <div style="padding:7px;font-size:11px;">
+        <div style="color:var(--text-dim);font-size:9px;text-transform:uppercase;">Date</div>
+        <div style="font-weight:700;" id="so-doc-date">—</div>
+      </div>
+    </div>
   </div>
   <div class="action-bar">
     <button class="btn btn-primary" id="btn-submit" onclick="handleSubmit()">Submit &amp; Save Build Card</button>
   </div>
 </section>
 
-<!-- ══ SWITCH OPERATOR BUTTON ════════════════════════════════════════════════ -->
+<!-- ══ COMPLETE ══════════════════════════════════════════════════════════════ -->
+<section id="screen-complete" class="screen"
+         style="justify-content:center;align-items:center;text-align:center;padding:32px 24px;">
+  <img src="icons/rippel_logo.png" alt="Rippel Effect" style="width:160px;margin-bottom:24px;opacity:0.8;">
+  <div class="complete-icon">✅</div>
+  <h2>Build Card Saved</h2>
+  <div class="complete-serial" id="done-serial"></div>
+  <p style="color:var(--text-dim);font-size:13px;margin-bottom:28px;">Build card recorded and signed off.</p>
+  <div class="complete-btns">
+    <button class="btn btn-primary"   onclick="goToResume()">Start Another Unit</button>
+    <button class="btn btn-secondary" onclick="endSession()">End Session</button>
+  </div>
+</section>
+
+<!-- ══ SWITCH OPERATOR ═══════════════════════════════════════════════════════ -->
 <div id="switch-op-btn" style="display:none;position:fixed;top:10px;right:12px;z-index:30;">
   <button onclick="showSwitchOperator()"
           style="background:#1a2236;border:1px solid #3a5080;color:#8fa3c0;
@@ -290,18 +237,6 @@
     🔄 <span id="switch-op-label">OP —</span>
   </button>
 </div>
-
-<!-- ══ COMPLETE ══════════════════════════════════════════════════════════════ -->
-<section id="screen-complete" class="screen" style="justify-content:center;align-items:center;text-align:center;padding:32px 24px;">
-  <div class="complete-icon">✅</div>
-  <h2>Build Card Saved</h2>
-  <div class="complete-serial" id="done-serial"></div>
-  <p style="color:var(--text-dim);font-size:13px;margin-bottom:28px;">RLL build card recorded and signed off.</p>
-  <div class="complete-btns">
-    <button class="btn btn-primary"   onclick="goToResume()">Start Another Unit</button>
-    <button class="btn btn-secondary" onclick="endSession()">End Session</button>
-  </div>
-</section>
 
 <!-- ══ BOTTOM NAV ════════════════════════════════════════════════════════════ -->
 <nav id="bottom-nav" class="bottom-nav hidden">
@@ -326,6 +261,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="js/supabase.js"></script>
+<script src="js/cardconfig.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
