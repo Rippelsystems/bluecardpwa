@@ -351,3 +351,16 @@ textarea { resize: vertical; min-height: 72px; }
 #toast.ok    { border-color: var(--pass); }
 #toast.error { border-color: var(--fail); }
 #toast.warn  { border-color: var(--warn); }
+
+/* ─── RESUME CARDS ────────────────────────────────────────────────────────── */
+.resume-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.resume-card:active { border-color: var(--accent); }
+.loading-msg { text-align:center; color:var(--text-dim); font-size:13px; padding:16px 0; }
