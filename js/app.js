@@ -416,11 +416,19 @@ async function confirmLauncherSerial() {
     // But warn the operator clearly
   }
 
-  // Step 4: Check for duplicates (completed build cards)
+  // Step 4: Check for duplicates
   if (!state.buildId) {
-    const isDupe = await checkDuplicateSerial(s1);
-    if (isDupe) {
-      showToast(`🚫 DUPLICATE — ${s1} already has a completed build card`, 'error');
+    const dupeCheck = await checkDuplicateSerial(s1);
+    if (dupeCheck.isDupe) {
+      const st = dupeCheck.status || 'EXISTS';
+      const rec = dupeCheck.record || {};
+      let msg = `🚫 DUPLICATE — ${s1} already exists`;
+      if (st === 'COMPLETE') msg += ` (COMPLETED build card)`;
+      else if (st === 'IN PROGRESS') msg += ` — IN PROGRESS on Trolley ${rec.trolley_number||'?'} Pos ${rec.trolley_position||'?'} by OP ${rec.operator_number||'?'}`;
+      showToast(msg, 'error');
+      // Also show in the verified field
+      const lv = document.getElementById('launcher-verified');
+      if (lv) { lv.style.display='block'; lv.textContent=msg; lv.style.color='var(--fail)'; }
       if (btn) { btn.textContent = '✓'; btn.disabled = false; }
       return;
     }
