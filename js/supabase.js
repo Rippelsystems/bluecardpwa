@@ -35,16 +35,17 @@ async function getAssemblers() {
 }
 
 async function checkDuplicateSerial(serial) {
-  if (!supabaseClient) return false;
-  // Check 1: Is there already a COMPLETED build card for this serial?
+  if (!supabaseClient) return { isDupe: false, status: null };
+  // Check weapon_builds for any existing card with this serial
   const { data: builds } = await supabaseClient
     .from('weapon_builds')
-    .select('id,status')
+    .select('id,status,operator_number,trolley_number,trolley_position')
     .eq('launcher_serial', serial)
-    .eq('status', 'COMPLETE')
     .limit(1);
-  if (builds && builds.length > 0) return true;
-  return false;
+  if (builds && builds.length > 0) {
+    return { isDupe: true, status: builds[0].status, record: builds[0] };
+  }
+  return { isDupe: false, status: null };
 }
 
 async function validateSerialExists(serial) {
