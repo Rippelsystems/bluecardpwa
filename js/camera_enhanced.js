@@ -1,3 +1,7 @@
+// ─── ENHANCED CAMERA MODULE — loads after app.js ─────────────────────────────
+// If anything fails, app.js basic captureSerial remains as fallback
+try {
+
 // ─── ENHANCED CAMERA + OCR MODULE ─────────────────────────────────────────────
 // Uses OpenCV.js preprocessing + Tesseract.js for dot-matrix serial recognition
 // Loads OpenCV from CDN — no installation needed on tablet
@@ -325,3 +329,12 @@ function showRetakeSuggestion(fieldId, photoKey) {
 // Expose initOCR globally so app.js can call it on login
 window.initOCR = initOCR;
 window.captureSerial = captureSerial;
+
+
+  // Override app.js basic functions with enhanced versions
+  console.log('[Camera Enhanced] Loaded successfully');
+
+} catch(loadErr) {
+  console.warn('[Camera Enhanced] Failed to load, using basic camera:', loadErr);
+  // app.js basic captureSerial and initOCR remain active as fallback
+}
