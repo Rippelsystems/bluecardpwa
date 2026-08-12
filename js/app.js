@@ -377,15 +377,60 @@ function resetSerialConfirm() {
 }
 
 async function confirmLauncherSerial() {
-  const s1=document.getElementById('inp-launcher-serial')?.value.trim().toUpperCase();
-  const s2=document.getElementById('inp-launcher-confirm')?.value.trim().toUpperCase();
-  if(!s1||!s2){showToast('Enter serial in both fields','error');return;}
-  if(s1!==s2){showToast('Serials do not match','error');return;}
-  if(!state.buildId){const isDupe=await checkDuplicateSerial(s1);if(isDupe){showToast(`DUPLICATE — ${s1} exists`,'error');return;}}
-  state.formData.launcher_serial=s1; state.serialVerified=true;
-  const lv=document.getElementById('launcher-verified'); if(lv) lv.style.display='block';
-  const lw=document.getElementById('launcher-confirm-wrap'); if(lw) lw.style.display='none';
-  showToast('Launcher serial confirmed ✓','ok');
+  const s1 = document.getElementById('inp-launcher-serial')?.value.trim().toUpperCase();
+  const s2 = document.getElementById('inp-launcher-confirm')?.value.trim().toUpperCase();
+
+  // Step 1: Both fields must be filled
+  if (!s1 || !s2) { showToast('Enter serial in both fields', 'error'); return; }
+
+  // Step 2: Both entries must match exactly
+  if (s1 !== s2) {
+    showToast('❌ Serials do not match — check and re-enter', 'error');
+    // Clear confirm field and highlight it red
+    const conf = document.getElementById('inp-launcher-confirm');
+    if (conf) { conf.value = ''; conf.style.borderBottomColor = 'var(--fail)'; conf.focus(); }
+    return;
+  }
+
+  // Step 3: Check if serial exists in the register
+  const btn = document.querySelector('#launcher-confirm-wrap button');
+  if (btn) { btn.textContent = 'Checking…'; btn.disabled = true; }
+
+  const validation = await validateSerialExists(s1);
+
+  if (!validation.exists) {
+    showToast(`⚠ Serial ${s1} not found in register — check serial number`, 'warn');
+    // Still allow — serial might be for a different product line
+    // But warn the operator clearly
+  }
+
+  // Step 4: Check for duplicates (completed build cards)
+  if (!state.buildId) {
+    const isDupe = await checkDuplicateSerial(s1);
+    if (isDupe) {
+      showToast(`🚫 DUPLICATE — ${s1} already has a completed build card`, 'error');
+      if (btn) { btn.textContent = '✓'; btn.disabled = false; }
+      return;
+    }
+  }
+
+  if (btn) { btn.textContent = '✓'; btn.disabled = false; }
+
+  // Step 5: Confirmed!
+  state.formData.launcher_serial = s1;
+  state.serialVerified = true;
+  const lv = document.getElementById('launcher-verified');
+  const lw = document.getElementById('launcher-confirm-wrap');
+  if (lv) {
+    lv.style.display = 'block';
+    lv.textContent = validation.exists
+      ? `✓ Serial verified — ${s1}`
+      : `⚠ Serial verified (not in register) — ${s1}`;
+    lv.style.color = validation.exists ? 'var(--pass)' : 'var(--warn)';
+  }
+  if (lw) lw.style.display = 'none';
+  showToast(validation.exists ? `✓ Serial confirmed — ${s1}` : `⚠ Serial confirmed but not in register — ${s1}`,
+            validation.exists ? 'ok' : 'warn');
 }
 
 async function saveIdentity() {
@@ -393,7 +438,13 @@ async function saveIdentity() {
   Object.entries(map).forEach(([elId,key])=>{
     const el=document.getElementById(elId); if(el&&el.value) state.formData[key]=el.value;
   });
-  if(!state.serialVerified&&state.formData.launcher_serial) showToast('Saving without confirmed serial','warn');
+  // Block save if launcher serial entered but not confirmed
+  const launcherInput = document.getElementById('inp-launcher-serial')?.value.trim();
+  if (launcherInput && !state.serialVerified) {
+    showToast('❌ Please confirm the launcher serial first — tap ✓ button', 'error');
+    document.getElementById('launcher-confirm-wrap').style.display = 'block';
+    return;
+  }
   let result,error;
   if(state.buildId){
     ({data:result,error}=await supabaseClient.from('weapon_builds')
@@ -403,6 +454,16 @@ async function saveIdentity() {
     if(!error&&result&&result.length>0) state.buildId=result[0].id;
   }
   if(error){console.error(error);showToast('Save failed','error');return;}
+  // Update serial status to IN PROGRESS in weapon_serials
+  if(state.formData.launcher_serial) {
+    await supabaseClient.from('weapon_serials')
+      .update({
+        status: 'IN PROGRESS',
+        trolley_number: state.formData.trolley_number||null,
+        trolley_position: state.formData.trolley_position||null
+      })
+      .eq('serial_number', state.formData.launcher_serial);
+  }
   await logActivity('IDENTITY_SAVE',state.formData,null);
   showToast('Identity saved ✓','ok');
   loadActivityLog(state.formData.launcher_serial);
@@ -566,12 +627,27 @@ function buildGRN40Stages(container, stages) {
 
 function setCheck(id,result) {
   if(!state.checks[id]) state.checks[id]={};
+  const prevResult = state.checks[id].result;
+  const prevOp = state.checks[id].assy_no;
   state.checks[id].result=result;
   state.checks[id].assy_no=state.checks[id].assy_no||state.operator;
   state.checks[id].timestamp=new Date().toISOString();
   applyCheckVisual(id); updateChecksProgress(); updateNavBadges();
   const stamp=document.getElementById(`assy-${id}`);
   if(stamp) stamp.textContent=`OP ${state.checks[id].assy_no}`;
+  // Log individual check action with full detail
+  const cfg=getCardConfig();
+  const checkDef = (cfg.checks||cfg.stages||[]).find(c=>c.id===id);
+  const label = checkDef ? checkDef.label : id;
+  logActivity('CHECK_MARKED', null, {
+    check_id: id,
+    check_label: label,
+    result: result,
+    prev_result: prevResult || 'UNMARKED',
+    assy_no: state.checks[id].assy_no,
+    prev_assy_no: prevOp || 'none',
+    timestamp: state.checks[id].timestamp
+  });
 }
 
 function setCheckValue(id,value) { if(!state.checks[id]) state.checks[id]={}; state.checks[id].value=value; }
@@ -579,12 +655,25 @@ function setStageValue(id,value) { if(!state.checks[id]) state.checks[id]={}; st
 
 function editAssyNo(id) {
   const current=state.checks[id]?.assy_no||state.operator;
-  const newNo=prompt(`Assy No for this check:\nCurrently: ${current}\n\nEnter operator number:`);
+  const newNo=prompt(`Assy No for this check:\nCurrently: OP ${current}\n\nEnter operator number:`);
   if(!newNo||!newNo.trim()) return;
+  const prev = state.checks[id]?.assy_no || state.operator;
   if(!state.checks[id]) state.checks[id]={};
   state.checks[id].assy_no=newNo.trim();
   const stamp=document.getElementById(`assy-${id}`); if(stamp) stamp.textContent=`OP ${newNo.trim()}`;
   showToast(`Assy No → ${newNo.trim()}`,'ok');
+  // Log the operator reassignment
+  const cfg=getCardConfig();
+  const checkDef = (cfg.checks||cfg.stages||[]).find(c=>c.id===id);
+  const label = checkDef ? checkDef.label : id;
+  logActivity('ASSY_NO_CHANGED', null, {
+    check_id: id,
+    check_label: label,
+    changed_from: prev,
+    changed_to: newNo.trim(),
+    by_operator: state.operator,
+    timestamp: new Date().toISOString()
+  });
 }
 
 function applyCheckVisual(id) {
