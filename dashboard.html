@@ -378,12 +378,13 @@
     }
 
     list.innerHTML = filtered.map(s => {
-      const badgeClass = s.status === 'COMPLETE'
+      const st = (s.status || 'UNBUILT').toUpperCase();
+      const badgeClass = st === 'COMPLETE'
         ? 'badge-complete'
-        : s.status === 'IN PROGRESS'
+        : st === 'IN PROGRESS'
         ? 'badge-inprogress'
         : 'badge-unbuilt';
-      const label = s.status === 'IN PROGRESS' ? 'IN PROG' : s.status;
+      const label = st === 'IN PROGRESS' ? 'IN PROG' : st;
       return `
         <div class="serial-row">
           <div class="dot ${s.status==='COMPLETE' ? 'red' : s.status==='IN PROGRESS' ? 'orange' : 'green'}"></div>
