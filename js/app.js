@@ -126,9 +126,15 @@ async function findByTrolley() {
   const t=document.getElementById('inp-find-trolley').value;
   const p=document.getElementById('inp-find-pos').value;
   if (!t||!p){showToast('Select trolley and position','error');return;}
-  const {data}=await supabaseClient.from('weapon_builds').select('id,card_type').eq('trolley_number',t).eq('trolley_position',p).neq('status','COMPLETE').limit(1);
+  // Cast to integer for Supabase integer column
+  const {data}=await supabaseClient.from('weapon_builds')
+    .select('id,card_type')
+    .eq('trolley_number', parseInt(t))
+    .eq('trolley_position', parseInt(p))
+    .neq('status','COMPLETE')
+    .limit(1);
   if (data&&data.length>0) loadBuild(data[0].id);
-  else showToast('No incomplete card at that position','warn');
+  else showToast(`No incomplete card at Trolley ${t} / Pos ${p}`, 'warn');
 }
 
 async function loadBuild(id) {
@@ -354,9 +360,15 @@ function getIdentityMap() {
 function refreshIdentity() {
   const opEl=document.getElementById('id-op'); if(opEl) opEl.textContent=state.operator||'—';
   const map=getIdentityMap();
-  Object.entries(map).forEach(([elId,key])=>{
-    const el=document.getElementById(elId); if(el&&state.formData[key]) el.value=state.formData[key];
-  });
+  // Use setTimeout to ensure dropdowns are populated before setting values
+  setTimeout(() => {
+    Object.entries(map).forEach(([elId,key])=>{
+      const el=document.getElementById(elId);
+      if(el && state.formData[key] !== undefined && state.formData[key] !== null) {
+        el.value=state.formData[key];
+      }
+    });
+  }, 100);
   if (state.serialVerified&&state.formData.launcher_serial) {
     const lv=document.getElementById('launcher-verified');
     const lw=document.getElementById('launcher-confirm-wrap');
@@ -434,38 +446,52 @@ async function confirmLauncherSerial() {
 }
 
 async function saveIdentity() {
-  const map=getIdentityMap();
-  Object.entries(map).forEach(([elId,key])=>{
-    const el=document.getElementById(elId); if(el&&el.value) state.formData[key]=el.value;
+  // Collect ALL fields from form — including selects
+  const map = getIdentityMap();
+  Object.entries(map).forEach(([elId, key]) => {
+    const el = document.getElementById(elId);
+    if (el) state.formData[key] = el.value || null;
   });
+
   // Block save if launcher serial entered but not confirmed
   const launcherInput = document.getElementById('inp-launcher-serial')?.value.trim();
   if (launcherInput && !state.serialVerified) {
     showToast('❌ Please confirm the launcher serial first — tap ✓ button', 'error');
-    document.getElementById('launcher-confirm-wrap').style.display = 'block';
+    const lw = document.getElementById('launcher-confirm-wrap');
+    if (lw) lw.style.display = 'block';
     return;
   }
-  let result,error;
-  if(state.buildId){
-    ({data:result,error}=await supabaseClient.from('weapon_builds')
-      .update({...state.formData,updated_at:new Date().toISOString()}).eq('id',state.buildId).select());
+
+  // Always set status and card type
+  state.formData.status = state.formData.status || 'IN PROGRESS';
+  state.formData.card_type = state.cardType;
+
+  let result, error;
+  if (state.buildId) {
+    ({data: result, error} = await supabaseClient.from('weapon_builds')
+      .update({...state.formData, updated_at: new Date().toISOString()})
+      .eq('id', state.buildId).select());
   } else {
-    ({data:result,error}=await supabaseClient.from('weapon_builds').insert({...state.formData}).select());
-    if(!error&&result&&result.length>0) state.buildId=result[0].id;
+    ({data: result, error} = await supabaseClient.from('weapon_builds')
+      .insert({...state.formData}).select());
+    if (!error && result && result.length > 0) state.buildId = result[0].id;
   }
-  if(error){console.error(error);showToast('Save failed','error');return;}
-  // Update serial status to IN PROGRESS in weapon_serials
-  if(state.formData.launcher_serial) {
-    await supabaseClient.from('weapon_serials')
-      .update({
-        status: 'IN PROGRESS',
-        trolley_number: state.formData.trolley_number||null,
-        trolley_position: state.formData.trolley_position||null
-      })
+
+  if (error) { console.error(error); showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
+
+  // Update serial register — mark as IN PROGRESS with trolley info
+  if (state.formData.launcher_serial) {
+    const serialUpdate = { status: 'IN PROGRESS' };
+    if (state.formData.trolley_number)   serialUpdate.trolley_number   = state.formData.trolley_number;
+    if (state.formData.trolley_position) serialUpdate.trolley_position = state.formData.trolley_position;
+    const { error: serErr } = await supabaseClient.from('weapon_serials')
+      .update(serialUpdate)
       .eq('serial_number', state.formData.launcher_serial);
+    if (serErr) console.warn('Serial status update failed:', serErr);
   }
-  await logActivity('IDENTITY_SAVE',state.formData,null);
-  showToast('Identity saved ✓','ok');
+
+  await logActivity('IDENTITY_SAVE', state.formData, null);
+  showToast('Identity saved ✓', 'ok');
   loadActivityLog(state.formData.launcher_serial);
 }
 
