@@ -36,10 +36,25 @@ async function getAssemblers() {
 
 async function checkDuplicateSerial(serial) {
   if (!supabaseClient) return false;
-  const { data } = await supabaseClient
+  // Check 1: Is there already a COMPLETED build card for this serial?
+  const { data: builds } = await supabaseClient
     .from('weapon_builds')
-    .select('id')
+    .select('id,status')
+    .eq('launcher_serial', serial)
+    .eq('status', 'COMPLETE')
+    .limit(1);
+  if (builds && builds.length > 0) return true;
+  return false;
+}
+
+async function validateSerialExists(serial) {
+  // Check if serial is in the weapon_serials register at all
+  if (!supabaseClient) return { exists: true, status: 'UNKNOWN' };
+  const { data } = await supabaseClient
+    .from('weapon_serials')
+    .select('serial_number, status')
     .eq('serial_number', serial)
     .limit(1);
-  return data && data.length > 0;
+  if (!data || data.length === 0) return { exists: false, status: null };
+  return { exists: true, status: data[0].status };
 }
