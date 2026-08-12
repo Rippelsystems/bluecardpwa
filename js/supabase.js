@@ -1,11 +1,10 @@
 // ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
 // Replace these with your actual Supabase project URL and anon key
-// TEST project: wtkbsvopuvtxiprjtqqx
-// LIVE project: rifargmdjzsqgkttwgoy
+// LIVE project: rifargmdjzsqgkttwgoy — PRODUCTION
 // Get your anon key from: Supabase Dashboard → Project Settings → API
 
-const SUPABASE_URL = 'https://wtkbsvopuvtxiprjtqqx.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_Yyt1XI--EtpYXbsdFy9c8A_4_tTQr9M';
+const SUPABASE_URL = 'https://rifargmdjzsqgkttwgoy.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_a5ssmsokU2JP2lnYqa7kaA_EZipRc_3';
 
 // ─── CLIENT ───────────────────────────────────────────────────────────────────
 // Using the Supabase CDN client (loaded in index.html)
