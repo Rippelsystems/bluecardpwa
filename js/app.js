@@ -34,7 +34,47 @@ function showSection(id) {
   if (id==='checks')   refreshChecks();
   if (id==='signoff')  refreshSignoff();
   const map = { identity:'screen-identity', checks:'screen-checks', signoff:'screen-signoff' };
-  if (map[id]) show(map[id]);
+  if (!map[id]) return;
+  // Auto-save checks whenever leaving checks tab
+  if (document.getElementById('screen-checks') && document.getElementById('screen-checks').classList.contains('active')) {
+    if (state.buildId) {
+      supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId).then(()=>{});
+    }
+  }
+  // Block move to signoff if required check values are missing
+  if (id === 'signoff') {
+    const cfg = getCardConfig();
+    const items = cfg.checks || cfg.stages || [];
+    const missing = [];
+    items.forEach(chk => {
+      const saved = state.checks[chk.id] || {};
+      // Must have a result
+      if (!saved.result) { missing.push(chk.label); return; }
+      // Measurement checks must also have a value
+      if (chk.type === 'measurement' && !saved.value) {
+        missing.push(chk.label + ' (value required)');
+      }
+      // GRN40 stages must have a tech_no
+      if (chk.tech_no !== undefined || (cfg.stages && cfg.stages.find(s=>s.id===chk.id))) {
+        if (!saved.tech_no) missing.push(chk.label + ' (tech no required)');
+      }
+    });
+    if (missing.length > 0) {
+      showToast('⚠ Complete all checks before sign-off: ' + missing.slice(0,3).join(', ') + (missing.length>3?' + more':''), 'error');
+      // Highlight incomplete rows
+      items.forEach(chk => {
+        const row = document.getElementById('chk-row-' + chk.id);
+        const saved = state.checks[chk.id] || {};
+        if (!saved.result || (chk.type==='measurement' && !saved.value)) {
+          if (row) { row.style.border='2px solid var(--fail)'; row.style.borderRadius='6px'; }
+        } else {
+          if (row) { row.style.border=''; }
+        }
+      });
+      return;
+    }
+  }
+  show(map[id]);
 }
 
 // ─── CARD TYPE HELPERS ────────────────────────────────────────────────────────
@@ -669,6 +709,12 @@ function setCheck(id,result) {
   applyCheckVisual(id); updateChecksProgress(); updateNavBadges();
   const stamp=document.getElementById(`assy-${id}`);
   if(stamp) stamp.textContent=`OP ${state.checks[id].assy_no}`;
+  // Auto-persist to DB on every check tap — so half-filled cards survive
+  if (state.buildId) {
+    supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId).then(({error})=>{
+      if(error) showToast('Auto-save failed','warn');
+    });
+  }
   // Log individual check action with full detail
   const cfg=getCardConfig();
   const checkDef = (cfg.checks||cfg.stages||[]).find(c=>c.id===id);
@@ -734,11 +780,50 @@ async function saveChecks() {
   const cfg=getCardConfig();
   const total=cfg.stages?cfg.stages.length:cfg.checks.length;
   const done=Object.values(state.checks).filter(v=>v&&v.result).length;
-  if(state.buildId){
-    await supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId);
-    await logActivity('CHECKS_SAVE',null,state.checks);
+
+  // Highlight any measurement checks that have result but no value
+  const items = cfg.checks || cfg.stages || [];
+  let missingValues = 0;
+  items.forEach(chk => {
+    const saved = state.checks[chk.id] || {};
+    const row = document.getElementById('chk-row-' + chk.id);
+    if (saved.result && chk.type === 'measurement' && !saved.value) {
+      if (row) { row.style.border = '2px solid var(--warn)'; row.style.borderRadius = '6px'; }
+      missingValues++;
+    } else {
+      if (row) row.style.border = '';
+    }
+  });
+  if (missingValues > 0) {
+    showToast(`⚠ ${missingValues} measurement check(s) need a value — fields highlighted`, 'warn');
   }
-  showToast(`Saved — ${done}/${total} marked`,'ok');
+
+  if (state.buildId) {
+    // Existing build — just update checks
+    const {error} = await supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId);
+    if (error) { showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
+    await logActivity('CHECKS_SAVE',null,state.checks);
+    showToast(`Saved — ${done}/${total} marked`,'ok');
+  } else if (state.formData && state.formData.launcher_serial) {
+    // No buildId yet but we have identity data — create a draft build record
+    const draft = {
+      ...state.formData,
+      card_type: state.cardType,
+      operator: state.operator,
+      checks: state.checks,
+      status: 'IN_PROGRESS',
+      started_at: new Date().toISOString(),
+    };
+    const {data, error} = await supabaseClient.from('weapon_builds').insert(draft).select().limit(1);
+    if (error) { showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
+    if (data && data.length > 0) {
+      state.buildId = data[0].id;
+      showToast(`Draft saved — ${done}/${total} marked`, 'ok');
+    }
+  } else {
+    // No identity at all — warn operator
+    showToast('⚠ Save identity (Step 1) before saving checks', 'warn');
+  }
 }
 
 function updateNavBadges() {
