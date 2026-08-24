@@ -237,7 +237,7 @@ function buildIdentityGrid() {
         </div>
       </div>
       <div class="card-cell span2">
-        <label>Client / Country</label>
+        <label>Client / Contract</label>
         <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;"></select>
       </div>
       <div class="card-cell">
@@ -295,7 +295,7 @@ function buildIdentityGrid() {
     </div>
     ${sightRow}
     <div class="card-cell span2">
-      <label>Client / Country</label>
+      <label>Client / Contract</label>
       <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;"></select>
     </div>
     <!-- Launcher Serial — full width with confirm -->
@@ -608,10 +608,10 @@ function populateYear() {
 
 async function loadCustomers() {
   try {
-    const {data}=await supabaseClient.from('weapon_serials').select('customer').order('customer');
-    const unique=[...new Set((data||[]).map(r=>r.customer).filter(Boolean))];
+    const {data}=await supabaseClient.from('supplier_po').select('project').order('project');
+    const unique=[...new Set((data||[]).map(r=>r.project).filter(Boolean))];
     const sel=document.getElementById('inp-customer'); if(!sel) return;
-    sel.innerHTML='<option value="">— Select —</option>';
+    sel.innerHTML='<option value="">— Select Contract / Country —</option>';
     unique.forEach(c=>sel.innerHTML+=`<option value="${c}">${c}</option>`);
     if(state.formData.client_country) sel.value=state.formData.client_country;
   } catch(e){}
