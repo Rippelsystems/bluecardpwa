@@ -195,7 +195,7 @@ async function loadBuild(id) {
 
 function startNewCard() {
   state.buildId=null;
-  state.formData={operator_number:state.operator,card_type:state.cardType,status:'IN PROGRESS',session_start:new Date().toISOString()};
+  state.formData={operator_number:state.operator,card_type:state.cardType,status:'IN PROGRESS',started_at:new Date().toISOString()};
   state.checks={}; state.serialVerified=false;
   updateCardBadges();
   buildIdentityGrid();
@@ -809,9 +809,9 @@ async function saveChecks() {
     const draft = {
       ...state.formData,
       card_type: state.cardType,
-      operator: state.operator,
+      operator_number: state.operator,
       checks: state.checks,
-      status: 'IN_PROGRESS',
+      status: 'IN PROGRESS',
       started_at: new Date().toISOString(),
     };
     const {data, error} = await supabaseClient.from('weapon_builds').insert(draft).select().limit(1);
