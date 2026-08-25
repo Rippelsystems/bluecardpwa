@@ -51,7 +51,7 @@ function showSection(id) {
       // Must have a result
       if (!saved.result) { missing.push(chk.label); return; }
       // Measurement checks must also have a value
-      if (chk.type === 'measurement' && !saved.value) {
+      if ((chk.type === 'measurement') && saved.result && !saved.value) {
         missing.push(chk.label + ' (value required)');
       }
       // GRN40 stages must have a tech_no
@@ -784,18 +784,25 @@ async function saveChecks() {
   // Highlight any measurement checks that have result but no value
   const items = cfg.checks || cfg.stages || [];
   let missingValues = 0;
+  let firstMissingInput = null;
   items.forEach(chk => {
     const saved = state.checks[chk.id] || {};
     const row = document.getElementById('chk-row-' + chk.id);
-    if (saved.result && chk.type === 'measurement' && !saved.value) {
-      if (row) { row.style.border = '2px solid var(--warn)'; row.style.borderRadius = '6px'; }
+    const inp = document.getElementById('chk-val-' + chk.id);
+    if (chk.type === 'measurement' && saved.result && !saved.value) {
+      if (row) { row.style.border = '2px solid #E65100'; row.style.borderRadius = '6px'; row.style.backgroundColor = '#FFF3E0'; }
+      if (inp) { inp.style.border = '2px solid #E65100'; inp.style.backgroundColor = '#FFF3E0'; inp.placeholder = '⚠ Value required!'; }
+      if (!firstMissingInput && inp) firstMissingInput = inp;
       missingValues++;
-    } else {
-      if (row) row.style.border = '';
+    } else if (chk.type === 'measurement') {
+      if (row) { row.style.border = ''; row.style.backgroundColor = ''; }
+      if (inp) { inp.style.border = ''; inp.style.backgroundColor = ''; }
     }
   });
   if (missingValues > 0) {
-    showToast(`⚠ ${missingValues} measurement check(s) need a value — fields highlighted`, 'warn');
+    showToast(`⚠ ${missingValues} measurement check(s) missing a value — highlighted in orange`, 'error');
+    if (firstMissingInput) firstMissingInput.scrollIntoView({behavior:'smooth', block:'center'});
+    return;  // Block save until values are filled
   }
 
   if (state.buildId) {
