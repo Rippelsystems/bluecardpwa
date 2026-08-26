@@ -134,22 +134,33 @@ async function loadResumeScreen() {
   listEl.innerHTML='<div class="loading-msg">Loading…</div>';
   try {
     const {data}=await supabaseClient.from('weapon_builds')
-      .select('id,launcher_serial,trolley_number,trolley_position,client_country,created_at,status,card_type')
-      .eq('operator_number',state.operator).neq('status','COMPLETE')
-      .order('created_at',{ascending:false}).limit(10);
+      .select('id,launcher_serial,trolley_number,trolley_position,client_country,created_at,status,card_type,checks')
+      .eq('operator_number',state.operator)
+      .order('created_at',{ascending:false}).limit(20);
     if (!data||data.length===0) {
       listEl.innerHTML='<div class="loading-msg">No incomplete cards — start a new one below</div>';
     } else {
-      listEl.innerHTML=data.map(r=>`
+      listEl.innerHTML=data.map(r=>{
+        const st=(r.status||'IN PROGRESS').toUpperCase();
+        const stColour=st==='COMPLETE'?'#1a9e5c':'#e08f1a';
+        const stLabel=st==='COMPLETE'?'✓ COMPLETE':'⏳ IN PROGRESS';
+        // Count checks completed
+        const checks=r.checks||{};
+        const done=Object.values(checks).filter(v=>v&&v.result).length;
+        const fails=Object.values(checks).filter(v=>v&&(v.result==='FAIL'||v.result==='NO-GO')).length;
+        const checksLabel=done>0?`${done} checks done${fails>0?' · '+fails+' FAIL':''}`:' No checks yet';
+        return `
         <div class="resume-card" onclick="loadBuild('${r.id}')">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
             <span style="background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;">${r.card_type||'RLL'}</span>
             <span style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--accent);">${r.launcher_serial||'No serial yet'}</span>
+            <span style="margin-left:auto;font-size:10px;font-weight:700;color:${stColour};background:${stColour}18;padding:2px 8px;border-radius:4px;border:1px solid ${stColour}44;">${stLabel}</span>
           </div>
-          <div style="font-size:11px;color:var(--text-dim);">
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:2px;">
             Trolley ${r.trolley_number||'—'} · Pos ${r.trolley_position||'—'} · ${r.client_country||'—'} · ${formatDate(new Date(r.created_at))}
           </div>
-        </div>`).join('');
+          <div style="font-size:11px;color:${fails>0?'#e05050':'var(--text-dim)'};">${checksLabel}</div>
+        </div>`;}).join('');
     }
   } catch(e) { listEl.innerHTML='<div class="loading-msg">Could not load cards</div>'; }
 }
@@ -714,6 +725,18 @@ function setCheck(id,result) {
     supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId).then(({error})=>{
       if(error) showToast('Auto-save failed','warn');
     });
+    // Keep weapon_serials in sync so serial register shows correct progress
+    if (state.formData && state.formData.launcher_serial) {
+      const cfg=getCardConfig();
+      const total=cfg.stages?cfg.stages.length:cfg.checks.length;
+      const done=Object.values(state.checks).filter(v=>v&&v.result).length;
+      const pct=total>0?Math.round(done/total*100):0;
+      // Only update to COMPLETE via handleSubmit — here just ensure IN PROGRESS
+      supabaseClient.from('weapon_serials')
+        .update({status:'IN PROGRESS', checks_done:done, checks_total:total, pct_complete:pct})
+        .eq('serial_number', state.formData.launcher_serial)
+        .then(()=>{});
+    }
   }
   // Log individual check action with full detail
   const cfg=getCardConfig();
