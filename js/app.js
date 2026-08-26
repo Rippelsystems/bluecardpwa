@@ -906,7 +906,9 @@ async function captureSerial(fieldId,photoKey) {
     const file=e.target.files[0]; if(!file){document.body.removeChild(input);return;}
     const reader=new FileReader();
     reader.onload=async(ev)=>{
-      const base64=ev.target.result; state.formData[photoKey]=base64;
+      // Use compressed version if available, else fall back to original
+      const base64 = reader._compressedResult || ev.target.result;
+      state.formData[photoKey]=base64;
       const thumb=document.getElementById(`thumb-${fieldId}`); if(thumb){thumb.src=base64;thumb.style.display='block';}
       const inp=document.getElementById(fieldId); if(inp){inp.placeholder='Reading…';inp.disabled=true;}
       const statusEl=document.getElementById('ocr-status'); if(statusEl) statusEl.textContent='🔍 Reading serial…';
@@ -925,9 +927,50 @@ async function captureSerial(fieldId,photoKey) {
         showToast('OCR failed — type manually','warn');
       }
     };
-    reader.readAsDataURL(file); document.body.removeChild(input);
+    // ── Photo compression before upload ──────────────────────────────────
+    // Resize to max 1200px wide and encode as JPEG at 70% quality.
+    // Reduces 8-12MB camera photos to ~150-400KB — ~20x smaller.
+    compressImage(file, 1200, 0.70).then(compressedBase64 => {
+      // Swap the real FileReader result with the compressed version
+      reader._compressedResult = compressedBase64;
+      reader.readAsDataURL(file);
+    });
+    document.body.removeChild(input);
   };
   input.click();
+}
+
+
+// ─── PHOTO COMPRESSION ────────────────────────────────────────────────────────
+// Resize image to maxWidth px and compress as JPEG at given quality (0-1).
+// Called before uploading serial photos to keep Supabase storage lean.
+function compressImage(file, maxWidth, quality) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        // Calculate target dimensions — preserve aspect ratio
+        let w = img.width;
+        let h = img.height;
+        if (w > maxWidth) {
+          h = Math.round(h * maxWidth / w);
+          w = maxWidth;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width  = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        // Export as JPEG — much smaller than PNG or raw base64
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(null); // fall back to uncompressed
+      img.src = ev.target.result;
+    };
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
 }
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
