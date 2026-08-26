@@ -62,7 +62,7 @@ async function initOCR() {
 }
 
 // ── Main capture function ─────────────────────────────────────────────────────
-async function captureSerial(fieldId, photoKey) {
+async function captureSerial(fieldId, photoKey, useOCR) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
@@ -90,8 +90,16 @@ async function captureSerial(fieldId, photoKey) {
       const inp = document.getElementById(fieldId);
       const statusEl = document.getElementById('ocr-status');
 
+      // ── PHOTO ONLY mode — no OCR for dot-matrix serials ─────────────────
+      if (!useOCR) {
+        if (statusEl) statusEl.textContent = '✅ Photo stored — type serial number above';
+        if (typeof showToast === 'function') showToast('Photo saved ✓', 'ok');
+        if (inp) { inp.disabled = false; inp.placeholder = 'Type serial number'; inp.focus(); }
+        return;
+      }
+
       if (inp) { inp.disabled = true; inp.placeholder = 'Reading…'; }
-      if (statusEl) statusEl.textContent = '🔍 Reading serial number…';
+      if (statusEl) statusEl.textContent = '🔍 Reading laser serial…';
       if (typeof showToast === 'function') showToast('Reading serial…', 'ok');
 
       try {
@@ -282,7 +290,7 @@ function showRetakeButton(fieldId, photoKey) {
   inp.parentNode.insertBefore(btn, inp.nextSibling);
 }
 
-// Override app.js functions
+// Override app.js functions — captureSerial now accepts useOCR flag
 window.initOCR = initOCR;
 window.captureSerial = captureSerial;
 console.log('[Camera Enhanced v1.3] Loaded');
