@@ -198,6 +198,7 @@ async function loadBuild(id) {
   state.cardType=row.card_type||'RLL';
   updateCardBadges();
   buildIdentityGrid();
+  _injectAutoSaveIndicator();
   refreshIdentity();
   show('screen-identity');
   populateTrolley(); populateYear(); loadCustomers();
@@ -206,10 +207,11 @@ async function loadBuild(id) {
 
 function startNewCard() {
   state.buildId=null;
-  state.formData={operator_number:state.operator,card_type:state.cardType,status:'IN PROGRESS',started_at:new Date().toISOString()};
+  state.formData={operator_number:state.operator,card_type:state.cardType,status:'IN PROGRESS',session_start:new Date().toISOString()};
   state.checks={}; state.serialVerified=false;
   updateCardBadges();
   buildIdentityGrid();
+  _injectAutoSaveIndicator();
   show('screen-identity');
   populateTrolley(); populateYear(); loadCustomers(); initOCR();
 }
@@ -244,20 +246,20 @@ function buildIdentityGrid() {
         <div class="serial-row">
           <input type="text" id="inp-sight-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
           <img class="serial-thumb" id="thumb-inp-sight-serial">
-          <button class="cam-btn" onclick="captureSerial('inp-sight-serial','photo_sight')">📷</button>
+          <button class="cam-btn" onclick="captureSerial('inp-sight-serial','photo_sight', true)">📷</button>
         </div>
       </div>
       <div class="card-cell span2">
         <label>Client / Contract</label>
-        <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;"></select>
+        <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;" onchange="scheduleAutoSave()"></select>
       </div>
       <div class="card-cell">
         <label>Year of Manufacturing</label>
-        <select id="inp-year"></select>
+        <select id="inp-year" onchange="scheduleAutoSave()"></select>
       </div>
       <div class="card-cell">
         <label>Trolley No</label>
-        <select id="inp-trolley-no" onchange="handleTrolleyChange()"></select>
+        <select id="inp-trolley-no" onchange="handleTrolleyChange();scheduleAutoSave()"></select>
       </div>`;
     return;
   }
@@ -269,7 +271,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-sight-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-sight-serial">
-        <button class="cam-btn" onclick="captureSerial('inp-sight-serial','photo_sight')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-sight-serial','photo_sight', true)">📷</button>
       </div>
     </div>` : '<div class="card-cell"></div>';
 
@@ -279,7 +281,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-hfm-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-hfm-prod-no">
-        <button class="cam-btn" onclick="captureSerial('inp-hfm-prod-no','photo_hfm_prod')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-hfm-prod-no','photo_hfm_prod', false)">📷</button>
       </div>
     </div>
     <div class="card-cell">
@@ -287,27 +289,27 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-hrc-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-hrc-prod-no">
-        <button class="cam-btn" onclick="captureSerial('inp-hrc-prod-no','photo_hrc_prod')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-hrc-prod-no','photo_hrc_prod', false)">📷</button>
       </div>
     </div>` : '';
 
   grid.innerHTML = `
     <div class="card-cell">
       <label>Trolley No</label>
-      <select id="inp-trolley-no" onchange="handleTrolleyChange()"></select>
+      <select id="inp-trolley-no" onchange="handleTrolleyChange();scheduleAutoSave()"></select>
     </div>
     <div class="card-cell">
       <label>Trolley Position</label>
-      <select id="inp-trolley-pos"></select>
+      <select id="inp-trolley-pos" onchange="scheduleAutoSave()"></select>
     </div>
     <div class="card-cell">
       <label>Year of Manufacturing</label>
-      <select id="inp-year"></select>
+      <select id="inp-year" onchange="scheduleAutoSave()"></select>
     </div>
     ${sightRow}
     <div class="card-cell span2">
       <label>Client / Contract</label>
-      <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;"></select>
+      <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;" onchange="scheduleAutoSave()"></select>
     </div>
     <!-- Launcher Serial — full width with confirm -->
     <div class="card-cell span2">
@@ -316,7 +318,7 @@ function buildIdentityGrid() {
         <input type="text" id="inp-launcher-serial" placeholder="Tap 📷 or type"
                autocapitalize="characters" spellcheck="false" onchange="resetSerialConfirm()">
         <img class="serial-thumb" id="thumb-inp-launcher-serial">
-        <button class="cam-btn" onclick="captureSerial('inp-launcher-serial','photo_launcher')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-launcher-serial','photo_launcher', false)">📷</button>
       </div>
       <div id="launcher-confirm-wrap" style="margin-top:6px;display:none;">
         <label style="color:var(--warn);font-size:10px;font-weight:700;letter-spacing:0.07em;display:block;margin-bottom:3px;">CONFIRM LAUNCHER SERIAL</label>
@@ -335,7 +337,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-barrel-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-barrel-no">
-        <button class="cam-btn" onclick="captureSerial('inp-barrel-no','photo_barrel')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-barrel-no','photo_barrel', false)">📷</button>
       </div>
     </div>
     <div class="card-cell">
@@ -343,7 +345,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-barrel-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-barrel-prod-no">
-        <button class="cam-btn" onclick="captureSerial('inp-barrel-prod-no','photo_barrel_prod')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-barrel-prod-no','photo_barrel_prod', false)">📷</button>
       </div>
     </div>
     <!-- Cylinder No | HRC Serial No -->
@@ -352,7 +354,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-cylinder-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-cylinder-no">
-        <button class="cam-btn" onclick="captureSerial('inp-cylinder-no','photo_cylinder')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-cylinder-no','photo_cylinder', false)">📷</button>
       </div>
     </div>
     <div class="card-cell">
@@ -360,7 +362,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-hrc-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-hrc-serial">
-        <button class="cam-btn" onclick="captureSerial('inp-hrc-serial','photo_hrc')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-hrc-serial','photo_hrc', false)">📷</button>
       </div>
     </div>
     <!-- Cylinder Production No | Firing Mech No -->
@@ -369,7 +371,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-cylinder-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-cylinder-prod-no">
-        <button class="cam-btn" onclick="captureSerial('inp-cylinder-prod-no','photo_cylinder_prod')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-cylinder-prod-no','photo_cylinder_prod', false)">📷</button>
       </div>
     </div>
     <div class="card-cell">
@@ -377,7 +379,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-firing-mech" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-firing-mech">
-        <button class="cam-btn" onclick="captureSerial('inp-firing-mech','photo_firing_mech')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-firing-mech','photo_firing_mech', false)">📷</button>
       </div>
     </div>
     <!-- HFM Serial No | empty -->
@@ -386,7 +388,7 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <input type="text" id="inp-hfm-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-hfm-serial">
-        <button class="cam-btn" onclick="captureSerial('inp-hfm-serial','photo_hfm')">📷</button>
+        <button class="cam-btn" onclick="captureSerial('inp-hfm-serial','photo_hfm', false)">📷</button>
       </div>
     </div>
     <div class="card-cell"></div>
@@ -568,6 +570,8 @@ async function confirmLauncherSerial() {
   }
   if (lw) lw.style.display = 'none';
   showToast(`✓ Serial confirmed — ${s1}`, 'ok');
+  // Auto-save immediately — serial confirmed is the most critical moment
+  autoSaveIdentity();
 }
 
 async function saveIdentity() {
@@ -584,6 +588,17 @@ async function saveIdentity() {
     showToast('❌ Please confirm the launcher serial first — tap ✓ button', 'error');
     const lw = document.getElementById('launcher-confirm-wrap');
     if (lw) lw.style.display = 'block';
+    return;
+  }
+
+  // Warn if launcher photo not taken — it is required for customs/export docs
+  if (state.serialVerified && !state.formData.photo_launcher) {
+    showToast('📷 Please take a photo of the Launcher Serial before saving', 'warn');
+    const statusEl = document.getElementById('ocr-status');
+    if (statusEl) {
+      statusEl.textContent = '⚠ Launcher serial photo REQUIRED — tap 📷 next to Launcher Serial No';
+      statusEl.style.color = 'var(--warn)';
+    }
     return;
   }
 
@@ -908,7 +923,7 @@ async function saveChecks() {
       operator_number: state.operator,
       checks: state.checks,
       status: 'IN PROGRESS',
-      started_at: new Date().toISOString(),
+      session_start: new Date().toISOString(),
     };
     const {data, error} = await supabaseClient.from('weapon_builds').insert(draft).select().limit(1);
     if (error) { showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
@@ -983,57 +998,181 @@ async function initOCR() {
   try {
     tesseractWorker=await Tesseract.createWorker('eng');
     await tesseractWorker.setParameters({tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- '});
-    const el=document.getElementById('ocr-status'); if(el) el.textContent='📷 Camera ready — tap icon next to any yellow serial field';
+    const el=document.getElementById('ocr-status'); if(el) el.textContent='📷 Tap 📷 next to Launcher Serial to take a required photo — other photos optional';
   } catch(e){ const el=document.getElementById('ocr-status'); if(el) el.textContent='⚠ OCR not available — type manually'; }
 }
 
-async function captureSerial(fieldId,photoKey) {
-  const input=document.createElement('input');
-  input.type='file'; input.accept='image/*'; input.capture='environment';
-  input.style.display='none'; document.body.appendChild(input);
-  input.onchange=async(e)=>{
-    const file=e.target.files[0]; if(!file){document.body.removeChild(input);return;}
-    const reader=new FileReader();
-    reader.onload=async(ev)=>{
-      // Use compressed version if available, else fall back to original
-      const base64 = reader._compressedResult || ev.target.result;
-      state.formData[photoKey]=base64;
-      const thumb=document.getElementById(`thumb-${fieldId}`); if(thumb){thumb.src=base64;thumb.style.display='block';}
-      const inp=document.getElementById(fieldId); if(inp){inp.placeholder='Reading…';inp.disabled=true;}
-      const statusEl=document.getElementById('ocr-status'); if(statusEl) statusEl.textContent='🔍 Reading serial…';
-      showToast('Reading serial…','ok');
-      try {
-        if(!tesseractWorker) await initOCR();
-        const {data}=await tesseractWorker.recognize(base64);
-        let text=data.text.trim().toUpperCase().replace(/\n/g,' ').replace(/\s+/g,' ').trim();
-        if(inp){inp.value=text;inp.disabled=false;inp.placeholder='Confirm or correct';}
-        if(statusEl) statusEl.textContent='✓ Read — confirm or correct above';
-        // Normalise OCR result before showing confirm
-        if(fieldId==='inp-launcher-serial') {
-          if(inp) inp.value = normaliseSerial(inp.value, state.cardType);
-          resetSerialConfirm();
-        }
-        showToast('Done — confirm serial ✓','ok');
-      } catch(err){
-        if(inp){inp.disabled=false;inp.placeholder='Type manually';}
-        if(statusEl) statusEl.textContent='⚠ Could not read — type manually';
-        showToast('OCR failed — type manually','warn');
-      }
-    };
-    // ── Photo compression before upload ──────────────────────────────────
-    // Resize to max 1200px wide and encode as JPEG at 70% quality.
-    // Reduces 8-12MB camera photos to ~150-400KB — ~20x smaller.
-    compressImage(file, 1200, 0.70).then(compressedBase64 => {
-      // Swap the real FileReader result with the compressed version
-      reader._compressedResult = compressedBase64;
-      reader.readAsDataURL(file);
+async function captureSerial(fieldId, photoKey, useOCR) {
+  // useOCR: true  = compress + store + run OCR (laser-engraved serials only)
+  //         false = compress + store photo only, operator types serial manually
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*'; input.capture = 'environment';
+  input.style.display = 'none'; document.body.appendChild(input);
+
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) { document.body.removeChild(input); return; }
+
+    const statusEl = document.getElementById('ocr-status');
+    const thumb    = document.getElementById(`thumb-${fieldId}`);
+    const inp      = document.getElementById(fieldId);
+
+    if (statusEl) statusEl.textContent = '📷 Compressing photo…';
+
+    // Always compress before storing
+    const compressed = await compressImage(file, 1200, 0.70);
+    const base64 = compressed || await new Promise(res => {
+      const r = new FileReader();
+      r.onload = ev => res(ev.target.result);
+      r.readAsDataURL(file);
     });
-    document.body.removeChild(input);
+
+    // Store photo
+    state.formData[photoKey] = base64;
+
+    // Show thumbnail
+    if (thumb) { thumb.src = base64; thumb.style.display = 'block'; }
+
+    if (!useOCR) {
+      // ── PHOTO ONLY — no OCR ─────────────────────────────────────────────
+      if (statusEl) statusEl.textContent = '✅ Photo stored — type serial number above';
+      showToast('Photo saved ✓', 'ok');
+      if (inp) {
+        inp.disabled    = false;
+        inp.placeholder = 'Type serial number';
+        inp.focus();
+      }
+      return;
+    }
+
+    // ── OCR PATH — laser-engraved serials only ───────────────────────────
+    if (inp) { inp.placeholder = 'Reading…'; inp.disabled = true; }
+    if (statusEl) statusEl.textContent = '🔍 Reading laser serial…';
+    showToast('Reading serial…', 'ok');
+
+    try {
+      if (!tesseractWorker) await initOCR();
+      const {data} = await tesseractWorker.recognize(base64);
+      let text = data.text.trim().toUpperCase()
+                  .replace(/\n/g,' ').replace(/\s+/g,' ').trim();
+      if (inp) {
+        inp.value       = normaliseSerial(text, state.cardType);
+        inp.disabled    = false;
+        inp.placeholder = 'Confirm or correct';
+      }
+      if (statusEl) statusEl.textContent = '✓ Read — confirm or correct above';
+      if (fieldId === 'inp-launcher-serial') resetSerialConfirm();
+      showToast('Done — confirm serial ✓', 'ok');
+    } catch(err) {
+      if (inp) { inp.disabled = false; inp.placeholder = 'Type manually'; }
+      if (statusEl) statusEl.textContent = '⚠ Could not read — type manually';
+      showToast('OCR failed — type manually', 'warn');
+    }
   };
+
+  document.body.removeChild(input);
   input.click();
 }
 
 
+
+
+// ─── IDENTITY AUTO-SAVE ───────────────────────────────────────────────────────
+// Auto-saves identity fields to Supabase without operator intervention.
+// Two triggers:
+//   A) Immediately after launcher serial is confirmed (most critical)
+//   B) 2 seconds after any other identity field changes (debounced)
+// Shows a small non-intrusive status indicator — not a full toast.
+
+let _autoSaveTimer = null;
+let _autoSaving    = false;
+
+function scheduleAutoSave(delayMs) {
+  // debounce — reset timer on every call
+  if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+  _autoSaveTimer = setTimeout(() => autoSaveIdentity(), delayMs || 2000);
+}
+
+function _injectAutoSaveIndicator() {
+  // Adds the auto-save status pill below the OCR status line on the identity screen.
+  // Safe to call multiple times — removes existing one first.
+  const existing = document.getElementById('autosave-indicator');
+  if (existing) existing.remove();
+  // Find the ocr-status div and insert after it
+  const ocrEl = document.getElementById('ocr-status');
+  if (!ocrEl || !ocrEl.parentNode) return;
+  const ind = document.createElement('div');
+  ind.id = 'autosave-indicator';
+  ind.style.cssText = 'font-size:11px;font-weight:700;padding:3px 10px;'
+    + 'text-align:right;color:var(--text-dim);min-height:18px;';
+  ocrEl.parentNode.insertBefore(ind, ocrEl.nextSibling);
+}
+
+async function autoSaveIdentity() {
+  // Don't auto-save if no serial confirmed yet — nothing worth saving
+  if (!state.serialVerified || !state.formData.launcher_serial) return;
+  // Don't stack saves
+  if (_autoSaving) { scheduleAutoSave(1500); return; }
+  _autoSaving = true;
+
+  // Show subtle saving indicator
+  const indEl = document.getElementById('autosave-indicator');
+  if (indEl) { indEl.textContent = '💾 Saving…'; indEl.style.color = 'var(--text-dim)'; }
+
+  // Collect current field values
+  const map = getIdentityMap();
+  Object.entries(map).forEach(([elId, key]) => {
+    const el = document.getElementById(elId);
+    if (el) state.formData[key] = el.value || null;
+  });
+  state.formData.status    = state.formData.status    || 'IN PROGRESS';
+  state.formData.card_type = state.cardType;
+
+  try {
+    let result, error;
+    if (state.buildId) {
+      ({data: result, error} = await supabaseClient
+        .from('weapon_builds')
+        .update({...state.formData, updated_at: new Date().toISOString()})
+        .eq('id', state.buildId).select());
+    } else {
+      ({data: result, error} = await supabaseClient
+        .from('weapon_builds')
+        .insert({...state.formData}).select());
+      if (!error && result && result.length > 0) {
+        state.buildId = result[0].id;
+      }
+    }
+
+    if (error) throw error;
+
+    // Update serial register status
+    if (state.formData.launcher_serial) {
+      const serialUpdate = { status: 'IN PROGRESS' };
+      if (state.formData.trolley_number)   serialUpdate.trolley_number   = state.formData.trolley_number;
+      if (state.formData.trolley_position) serialUpdate.trolley_position = state.formData.trolley_position;
+      await supabaseClient.from('weapon_serials')
+        .update(serialUpdate)
+        .eq('serial_number', state.formData.launcher_serial);
+    }
+
+    if (indEl) {
+      indEl.textContent = '✓ Saved';
+      indEl.style.color = 'var(--pass)';
+      setTimeout(() => { if(indEl) indEl.textContent = ''; }, 3000);
+    }
+    await logActivity('IDENTITY_AUTOSAVE', state.formData, null);
+
+  } catch(e) {
+    console.error('[AutoSave]', e);
+    if (indEl) {
+      indEl.textContent = '⚠ Auto-save failed';
+      indEl.style.color = 'var(--warn)';
+    }
+  } finally {
+    _autoSaving = false;
+  }
+}
 
 // ─── SERIAL NORMALISATION ─────────────────────────────────────────────────────
 // Cleans any serial number typed or OCR'd by the operator:
@@ -1157,6 +1296,8 @@ async function requestSupervisorOverride(serial) {
     showToast(`✓ Override approved — ${serial} added to register`, 'ok');
     state.formData.launcher_serial = serial;
     state.serialVerified = true;
+    // Auto-save immediately after override approval
+    autoSaveIdentity();
 
     const inp1 = document.getElementById('inp-launcher-serial');
     const inp2 = document.getElementById('inp-launcher-confirm');
