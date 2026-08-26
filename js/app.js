@@ -434,74 +434,140 @@ function resetSerialConfirm() {
   state.serialVerified=false;
   const lv=document.getElementById('launcher-verified');
   const lw=document.getElementById('launcher-confirm-wrap');
-  const val=document.getElementById('inp-launcher-serial')?.value.trim();
+  const inp=document.getElementById('inp-launcher-serial');
+  // Normalise on every change — fixes spaces, prefix, case automatically
+  if (inp && inp.value) {
+    const norm = normaliseSerial(inp.value, state.cardType);
+    if (norm !== inp.value) inp.value = norm;
+  }
+  const val=inp?.value.trim();
   if(lv) lv.style.display='none';
   if(lw) lw.style.display=val&&val.length>2?'block':'none';
 }
 
 async function confirmLauncherSerial() {
-  const s1 = document.getElementById('inp-launcher-serial')?.value.trim().toUpperCase();
-  const s2 = document.getElementById('inp-launcher-confirm')?.value.trim().toUpperCase();
+  const inp1 = document.getElementById('inp-launcher-serial');
+  const inp2 = document.getElementById('inp-launcher-confirm');
+  const btn  = document.querySelector('#launcher-confirm-wrap button');
+  const lv   = document.getElementById('launcher-verified');
+  const lw   = document.getElementById('launcher-confirm-wrap');
 
-  // Step 1: Both fields must be filled
-  if (!s1 || !s2) { showToast('Enter serial in both fields', 'error'); return; }
+  // ── STEP 1: Normalise both fields before comparing ──────────────────────
+  // This catches extra spaces, missing prefix, wrong case automatically.
+  const s1 = normaliseSerial(inp1?.value || '', state.cardType);
+  const s2 = normaliseSerial(inp2?.value || '', state.cardType);
 
-  // Step 2: Both entries must match exactly
-  if (s1 !== s2) {
-    showToast('❌ Serials do not match — check and re-enter', 'error');
-    // Clear confirm field and highlight it red
-    const conf = document.getElementById('inp-launcher-confirm');
-    if (conf) { conf.value = ''; conf.style.borderBottomColor = 'var(--fail)'; conf.focus(); }
+  // Write normalised value back so operator sees what was accepted
+  if (inp1) inp1.value = s1;
+  if (inp2) inp2.value = s2;
+
+  // ── STEP 2: Both fields must be filled ──────────────────────────────────
+  if (!s1 || !s2) {
+    showToast('Enter serial in both fields', 'error');
     return;
   }
 
-  // Step 3: Check if serial exists in the register
-  const btn = document.querySelector('#launcher-confirm-wrap button');
+  // ── STEP 3: Both normalised entries must match exactly ──────────────────
+  if (s1 !== s2) {
+    showToast('❌ Serials do not match — correct and re-enter', 'error');
+    if (inp2) {
+      inp2.value = '';
+      inp2.style.borderBottomColor = 'var(--fail)';
+      inp2.style.backgroundColor   = '#fff0f0';
+      inp2.focus();
+    }
+    if (lv) {
+      lv.style.display = 'block';
+      lv.textContent   = `❌  "${s1}"  ≠  "${s2}"  — they do not match`;
+      lv.style.color   = 'var(--fail)';
+    }
+    return;
+  }
+
+  // ── STEP 4: Minimum length sanity check ─────────────────────────────────
+  if (s1.length < 4) {
+    showToast('Serial too short — check and re-enter', 'error');
+    return;
+  }
+
+  // ── STEP 5: Check register — HARD BLOCK if not found ────────────────────
   if (btn) { btn.textContent = 'Checking…'; btn.disabled = true; }
 
   const validation = await validateSerialExists(s1);
 
   if (!validation.exists) {
-    showToast(`⚠ Serial ${s1} not found in register — check serial number`, 'warn');
-    // Still allow — serial might be for a different product line
-    // But warn the operator clearly
+    // HARD BLOCK — cannot proceed with an unregistered serial
+    showToast(`🚫 BLOCKED — "${s1}" not in serial register`, 'error');
+    if (lv) {
+      lv.style.display = 'block';
+      lv.innerHTML = `
+        <div style="color:var(--fail);font-weight:700;margin-bottom:6px;">
+          🚫 "${s1}" is NOT in the serial register.
+        </div>
+        <div style="font-size:12px;color:#ffaaaa;margin-bottom:10px;">
+          Check the number carefully — a single wrong digit or extra space will fail.<br>
+          If you are sure this serial is correct, ask your supervisor to approve.
+        </div>
+        <button id="btn-override-request"
+          style="background:#c0392b;color:#fff;border:none;padding:8px 18px;
+                 border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">
+          🔐 Supervisor Override
+        </button>
+        <span id="override-status" style="display:none;margin-left:10px;font-size:12px;"></span>`;
+      lv.style.color = 'var(--fail)';
+      // Wire up the override button
+      document.getElementById('btn-override-request')
+        .addEventListener('click', () => requestSupervisorOverride(s1));
+    }
+    if (inp1) { inp1.style.borderBottomColor = 'var(--fail)'; }
+    if (inp2) { inp2.value = ''; inp2.style.borderBottomColor = 'var(--fail)'; }
+    if (btn)  { btn.textContent = '✓'; btn.disabled = false; }
+    state.serialVerified = false;
+    // Log the failed attempt for audit trail
+    logActivity('SERIAL_NOT_IN_REGISTER', {serial_attempted: s1, operator: state.operator}, null);
+    return;
   }
 
-  // Step 4: Check for duplicates
+  // ── STEP 6: Duplicate check — hard block if already COMPLETE ────────────
   if (!state.buildId) {
     const dupeCheck = await checkDuplicateSerial(s1);
     if (dupeCheck.isDupe) {
-      const st = dupeCheck.status || 'EXISTS';
+      const st  = (dupeCheck.status || 'EXISTS').toUpperCase();
       const rec = dupeCheck.record || {};
-      let msg = `🚫 DUPLICATE — ${s1} already exists`;
-      if (st === 'COMPLETE') msg += ` (COMPLETED build card)`;
-      else if (st === 'IN PROGRESS') msg += ` — IN PROGRESS on Trolley ${rec.trolley_number||'?'} Pos ${rec.trolley_position||'?'} by OP ${rec.operator_number||'?'}`;
+      let msg, detail;
+      if (st === 'COMPLETE') {
+        msg    = `🚫 DUPLICATE — ${s1} already has a COMPLETED build card`;
+        detail = 'This weapon has already been built and signed off. Contact QA.';
+      } else {
+        msg    = `⚠ ${s1} is already IN PROGRESS`;
+        detail = `Trolley ${rec.trolley_number||'?'} · Pos ${rec.trolley_position||'?'} · OP ${rec.operator_number||'?'}`;
+      }
       showToast(msg, 'error');
-      // Also show in the verified field
-      const lv = document.getElementById('launcher-verified');
-      if (lv) { lv.style.display='block'; lv.textContent=msg; lv.style.color='var(--fail)'; }
+      if (lv) {
+        lv.style.display = 'block';
+        lv.innerHTML     = `${msg}<br><small style="color:#ffaaaa">${detail}</small>`;
+        lv.style.color   = 'var(--fail)';
+      }
       if (btn) { btn.textContent = '✓'; btn.disabled = false; }
+      state.serialVerified = false;
       return;
     }
   }
 
   if (btn) { btn.textContent = '✓'; btn.disabled = false; }
 
-  // Step 5: Confirmed!
+  // ── STEP 7: All checks passed — confirmed ───────────────────────────────
   state.formData.launcher_serial = s1;
   state.serialVerified = true;
-  const lv = document.getElementById('launcher-verified');
-  const lw = document.getElementById('launcher-confirm-wrap');
+  if (inp1) { inp1.style.borderBottomColor = 'var(--pass)'; inp1.style.backgroundColor = ''; }
+  if (inp2) { inp2.style.borderBottomColor = 'var(--pass)'; inp2.style.backgroundColor = ''; }
   if (lv) {
     lv.style.display = 'block';
-    lv.textContent = validation.exists
-      ? `✓ Serial verified — ${s1}`
-      : `⚠ Serial verified (not in register) — ${s1}`;
-    lv.style.color = validation.exists ? 'var(--pass)' : 'var(--warn)';
+    lv.textContent   = `✓ Serial confirmed and registered — ${s1}`;
+    lv.style.color   = 'var(--pass)';
   }
   if (lw) lw.style.display = 'none';
-  showToast(validation.exists ? `✓ Serial confirmed — ${s1}` : `⚠ Serial confirmed but not in register — ${s1}`,
-            validation.exists ? 'ok' : 'warn');
+  showToast(`✓ Serial confirmed — ${s1}`, 'ok');
 }
 
 async function saveIdentity() {
@@ -942,7 +1008,11 @@ async function captureSerial(fieldId,photoKey) {
         let text=data.text.trim().toUpperCase().replace(/\n/g,' ').replace(/\s+/g,' ').trim();
         if(inp){inp.value=text;inp.disabled=false;inp.placeholder='Confirm or correct';}
         if(statusEl) statusEl.textContent='✓ Read — confirm or correct above';
-        if(fieldId==='inp-launcher-serial') resetSerialConfirm();
+        // Normalise OCR result before showing confirm
+        if(fieldId==='inp-launcher-serial') {
+          if(inp) inp.value = normaliseSerial(inp.value, state.cardType);
+          resetSerialConfirm();
+        }
         showToast('Done — confirm serial ✓','ok');
       } catch(err){
         if(inp){inp.disabled=false;inp.placeholder='Type manually';}
@@ -963,6 +1033,154 @@ async function captureSerial(fieldId,photoKey) {
   input.click();
 }
 
+
+
+// ─── SERIAL NORMALISATION ─────────────────────────────────────────────────────
+// Cleans any serial number typed or OCR'd by the operator:
+//   - Strips leading/trailing whitespace
+//   - Collapses multiple internal spaces to one
+//   - Forces uppercase
+//   - For RLL cards: ensures prefix is exactly "RLL " (not RLL26004 or RL 26004)
+//   - For XRGL40 cards: normalises to "X## #### RSA" pattern where applicable
+// Returns the cleaned string.
+function normaliseSerial(raw, cardType) {
+  if (!raw) return '';
+  // Step 1: uppercase, collapse whitespace
+  let s = raw.toUpperCase().replace(/\s+/g, ' ').trim();
+
+  if (cardType === 'RLL') {
+    // Must start with RLL followed by a space then digits
+    // Handle: RLL26004 → RLL 26004, RL 26004 → RLL 26004
+    s = s.replace(/^RL{1,2}\s*/i, 'RLL ');
+    // Remove any non-alphanumeric except spaces
+    s = s.replace(/[^A-Z0-9 ]/g, '');
+    // Collapse again after cleaning
+    s = s.replace(/\s+/g, ' ').trim();
+  } else if (cardType === 'XRGL40') {
+    s = s.replace(/[^A-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  } else {
+    s = s.replace(/[^A-Z0-9 \-]/g, '').replace(/\s+/g, ' ').trim();
+  }
+  return s;
+}
+
+
+// ─── SUPERVISOR SERIAL OVERRIDE ───────────────────────────────────────────────
+// Called when operator taps "Supervisor Override" on a blocked serial.
+// Supervisor enters their PIN. If correct:
+//   - Adds the serial to weapon_serials table with status UNBUILT
+//   - Logs the override action with operator + supervisor identity
+//   - Allows the build to proceed
+// PIN is fetched from app_settings table (key='pwa_supervisor_pin').
+// Falls back to '9999' if table not reachable.
+async function requestSupervisorOverride(serial) {
+  const statusEl = document.getElementById('override-status');
+  const overrideBtn = document.getElementById('btn-override-request');
+
+  // Step 1: Get supervisor PIN from Supabase app_settings
+  let supervisorPin = '9999'; // fallback
+  try {
+    const {data: pinData} = await supabaseClient
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'pwa_supervisor_pin')
+      .limit(1);
+    if (pinData && pinData.length > 0) supervisorPin = pinData[0].value;
+  } catch(e) {
+    console.warn('[Override] Could not fetch supervisor PIN, using fallback');
+  }
+
+  // Step 2: Prompt for supervisor PIN
+  const enteredPin = prompt(
+    `SUPERVISOR OVERRIDE\n\n` +
+    `Serial: ${serial}\n` +
+    `Operator: OP ${state.operator}\n\n` +
+    `Enter supervisor PIN to add this serial and proceed:`
+  );
+
+  if (!enteredPin) {
+    if (statusEl) { statusEl.style.display='inline'; statusEl.textContent='Cancelled.'; statusEl.style.color='#aaa'; }
+    return;
+  }
+
+  // Step 3: Log the attempt regardless of outcome
+  logActivity('SUPERVISOR_OVERRIDE_ATTEMPT', {
+    serial_attempted: serial,
+    operator: state.operator,
+    pin_correct: enteredPin.trim() === supervisorPin
+  }, null);
+
+  // Step 4: Check PIN
+  if (enteredPin.trim() !== supervisorPin) {
+    if (statusEl) {
+      statusEl.style.display = 'inline';
+      statusEl.textContent   = '❌ Wrong PIN — override denied. Contact supervisor.';
+      statusEl.style.color   = 'var(--fail)';
+    }
+    showToast('❌ Wrong supervisor PIN — override denied', 'error');
+    return;
+  }
+
+  // Step 5: PIN correct — add serial to register
+  if (overrideBtn) { overrideBtn.disabled = true; overrideBtn.textContent = 'Adding…'; }
+  if (statusEl)    { statusEl.style.display='inline'; statusEl.textContent='Adding to register…'; statusEl.style.color='#aaa'; }
+
+  try {
+    const cardType = state.cardType || 'RLL';
+    const {error: insertErr} = await supabaseClient.from('weapon_serials').insert({
+      serial_number: serial,
+      card_type:     cardType,
+      status:        'UNBUILT',
+      added_by_override: true,
+      override_operator: state.operator,
+      override_note: `Added via supervisor override during build session`,
+    });
+
+    if (insertErr) {
+      // May already exist or column doesn't exist — try simpler insert
+      const {error: insertErr2} = await supabaseClient.from('weapon_serials').insert({
+        serial_number: serial,
+        card_type:     cardType,
+        status:        'UNBUILT',
+      });
+      if (insertErr2) throw insertErr2;
+    }
+
+    // Step 6: Log the approved override
+    logActivity('SUPERVISOR_OVERRIDE_APPROVED', {
+      serial_added: serial,
+      operator: state.operator,
+      card_type: cardType
+    }, null);
+
+    // Step 7: Now proceed as if serial was always in register
+    showToast(`✓ Override approved — ${serial} added to register`, 'ok');
+    state.formData.launcher_serial = serial;
+    state.serialVerified = true;
+
+    const inp1 = document.getElementById('inp-launcher-serial');
+    const inp2 = document.getElementById('inp-launcher-confirm');
+    const lv   = document.getElementById('launcher-verified');
+    const lw   = document.getElementById('launcher-confirm-wrap');
+
+    if (inp1) { inp1.value = serial; inp1.style.borderBottomColor = 'var(--pass)'; }
+    if (inp2) { inp2.style.borderBottomColor = 'var(--pass)'; }
+    if (lv) {
+      lv.innerHTML   = `✓ SUPERVISOR OVERRIDE APPROVED — ${serial} added to register by OP ${state.operator}`;
+      lv.style.color = 'var(--pass)';
+    }
+    if (lw) lw.style.display = 'none';
+
+  } catch(e) {
+    showToast('Override failed — could not add to register: ' + e.message, 'error');
+    if (statusEl) {
+      statusEl.style.display = 'inline';
+      statusEl.textContent   = '❌ Failed to add: ' + e.message;
+      statusEl.style.color   = 'var(--fail)';
+    }
+    if (overrideBtn) { overrideBtn.disabled = false; overrideBtn.textContent = '🔐 Supervisor Override'; }
+  }
+}
 
 // ─── PHOTO COMPRESSION ────────────────────────────────────────────────────────
 // Resize image to maxWidth px and compress as JPEG at given quality (0-1).
