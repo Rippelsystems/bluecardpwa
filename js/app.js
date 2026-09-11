@@ -881,7 +881,11 @@ function setCheck(id,result) {
   const prevResult = state.checks[id].result;
   const prevOp = state.checks[id].assy_no;
   state.checks[id].result=result;
-  state.checks[id].assy_no=state.checks[id].assy_no||state.operator;
+  // Always stamp the CURRENT operator — whoever last changed a result gets
+  // credited for it. Previously this used "existing || current", which meant
+  // whoever touched a check FIRST stayed credited forever, even if a
+  // different operator logged in later and corrected that same check.
+  state.checks[id].assy_no=state.operator;
   state.checks[id].timestamp=new Date().toISOString();
   applyCheckVisual(id); updateChecksProgress(); updateNavBadges();
   const stamp=document.getElementById(`assy-${id}`);
@@ -1117,6 +1121,15 @@ async function captureSerial(fieldId, photoKey, useOCR) {
 
     // Show thumbnail
     if (thumb) { thumb.src = base64; thumb.style.display = 'block'; }
+
+    // Persist the photo to Supabase immediately — do not wait for the
+    // operator to change another field or press Save. Previously a photo
+    // taken after the launcher serial was confirmed had no reliable trigger
+    // to ever reach the database, so it stayed on the tablet only.
+    if (statusEl) statusEl.textContent = '💾 Uploading photo…';
+    if (state.serialVerified && state.formData.launcher_serial) {
+      await autoSaveIdentity();
+    }
 
     if (!useOCR) {
       // ── PHOTO ONLY — no OCR ─────────────────────────────────────────────
