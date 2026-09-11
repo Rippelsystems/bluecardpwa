@@ -59,6 +59,22 @@ function showSection(id) {
         if (!saved.tech_no) missing.push(chk.label + ' (tech no required)');
       }
     });
+    // Block if no contract selected — contract is the serial-linking key
+    if (!state.formData.contract_name) {
+      showToast('⚠ Select a Contract before proceeding to sign-off', 'error');
+      const sel = document.getElementById('inp-contract');
+      if (sel) sel.style.border = '2px solid var(--fail)';
+      show('screen-identity');
+      return;
+    }
+    // Block if no country selected — required for customs/export documentation
+    if (!state.formData.client_country) {
+      showToast('⚠ Select a Country before proceeding to sign-off', 'error');
+      const sel = document.getElementById('inp-country');
+      if (sel) sel.style.border = '2px solid var(--fail)';
+      show('screen-identity');
+      return;
+    }
     if (missing.length > 0) {
       showToast('⚠ Complete all checks before sign-off: ' + missing.slice(0,3).join(', ') + (missing.length>3?' + more':''), 'error');
       // Highlight incomplete rows
@@ -134,7 +150,7 @@ async function loadResumeScreen() {
   listEl.innerHTML='<div class="loading-msg">Loading…</div>';
   try {
     const {data}=await supabaseClient.from('weapon_builds')
-      .select('id,launcher_serial,trolley_number,trolley_position,client_country,created_at,status,card_type,checks')
+      .select('id,launcher_serial,trolley_number,trolley_position,client_country,contract_name,created_at,status,card_type,checks')
       .eq('operator_number',state.operator)
       .order('created_at',{ascending:false}).limit(20);
     if (!data||data.length===0) {
@@ -157,7 +173,7 @@ async function loadResumeScreen() {
             <span style="margin-left:auto;font-size:10px;font-weight:700;color:${stColour};background:${stColour}18;padding:2px 8px;border-radius:4px;border:1px solid ${stColour}44;">${stLabel}</span>
           </div>
           <div style="font-size:11px;color:var(--text-dim);margin-bottom:2px;">
-            Trolley ${r.trolley_number||'—'} · Pos ${r.trolley_position||'—'} · ${r.client_country||'—'} · ${formatDate(new Date(r.created_at))}
+            Trolley ${r.trolley_number||'—'} · Pos ${r.trolley_position||'—'} · ${r.contract_name||r.client_country||'—'} · ${formatDate(new Date(r.created_at))}
           </div>
           <div style="font-size:11px;color:${fails>0?'#e05050':'var(--text-dim)'};">${checksLabel}</div>
         </div>`;}).join('');
@@ -201,7 +217,7 @@ async function loadBuild(id) {
   _injectAutoSaveIndicator();
   refreshIdentity();
   show('screen-identity');
-  populateTrolley(); populateYear(); loadCustomers();
+  populateTrolley(); populateYear(); loadCountries(); loadContracts();
   loadActivityLog(row.launcher_serial); initOCR();
 }
 
@@ -213,7 +229,7 @@ function startNewCard() {
   buildIdentityGrid();
   _injectAutoSaveIndicator();
   show('screen-identity');
-  populateTrolley(); populateYear(); loadCustomers(); initOCR();
+  populateTrolley(); populateYear(); loadCountries(); loadContracts(); initOCR();
 }
 
 function goToResume() {
@@ -249,9 +265,13 @@ function buildIdentityGrid() {
           <button class="cam-btn" onclick="captureSerial('inp-sight-serial','photo_sight', true)">📷</button>
         </div>
       </div>
-      <div class="card-cell span2">
-        <label>Client / Contract</label>
-        <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;" onchange="scheduleAutoSave()"></select>
+      <div class="card-cell">
+        <label>Country</label>
+        <select id="inp-country" style="font-family:var(--font-ui);font-size:13px;" onchange="scheduleAutoSave()"></select>
+      </div>
+      <div class="card-cell">
+        <label>Contract</label>
+        <select id="inp-contract" style="font-family:var(--font-ui);font-size:13px;" onchange="loadSerialsForProject(this.value);scheduleAutoSave()"></select>
       </div>
       <div class="card-cell">
         <label>Year of Manufacturing</label>
@@ -307,9 +327,13 @@ function buildIdentityGrid() {
       <select id="inp-year" onchange="scheduleAutoSave()"></select>
     </div>
     ${sightRow}
-    <div class="card-cell span2">
-      <label>Client / Contract</label>
-      <select id="inp-customer" style="font-family:var(--font-ui);font-size:13px;" onchange="scheduleAutoSave()"></select>
+    <div class="card-cell">
+      <label>Country</label>
+      <select id="inp-country" style="font-family:var(--font-ui);font-size:13px;" onchange="scheduleAutoSave()"></select>
+    </div>
+    <div class="card-cell">
+      <label>Contract</label>
+      <select id="inp-contract" style="font-family:var(--font-ui);font-size:13px;" onchange="loadSerialsForProject(this.value);scheduleAutoSave()"></select>
     </div>
     <!-- Launcher Serial — full width with confirm -->
     <div class="card-cell span2">
@@ -399,7 +423,7 @@ function buildIdentityGrid() {
 function getIdentityMap() {
   const base = {
     'inp-trolley-no':'trolley_number','inp-trolley-pos':'trolley_position',
-    'inp-year':'year_of_manufacture','inp-customer':'client_country',
+    'inp-year':'year_of_manufacture','inp-country':'client_country','inp-contract':'contract_name',
     'inp-launcher-serial':'launcher_serial','inp-barrel-no':'barrel_no',
     'inp-barrel-prod-no':'barrel_production_no','inp-cylinder-no':'cylinder_no',
     'inp-hrc-serial':'hrc_serial_no','inp-cylinder-prod-no':'cylinder_production_no',
@@ -504,10 +528,11 @@ async function confirmLauncherSerial() {
       lv.style.display = 'block';
       lv.innerHTML = `
         <div style="color:var(--fail);font-weight:700;margin-bottom:6px;">
-          🚫 "${s1}" is NOT in the serial register.
+          🚫 "${s1}" not found in this contract.
         </div>
         <div style="font-size:12px;color:#ffaaaa;margin-bottom:10px;">
-          Check the number carefully — a single wrong digit or extra space will fail.<br>
+          ${validation.reason || 'Check the serial number carefully — a single wrong digit or extra space will fail.'}<br>
+          Also check you have selected the correct contract above.<br>
           If you are sure this serial is correct, ask your supervisor to approve.
         </div>
         <button id="btn-override-request"
@@ -698,15 +723,75 @@ function populateYear() {
   if(!state.formData.year_of_manufacture) sel.value=y;
 }
 
-async function loadCustomers() {
+// ─── COUNTRY DROPDOWN — self-service list, purely descriptive ────────────────
+// Sourced from a small "countries" table the admin maintains directly in
+// Supabase (no code change needed to add a new country). Country has NO
+// effect on serial validation — it is printed on the card only.
+async function loadCountries() {
   try {
-    const {data}=await supabaseClient.from('supplier_po').select('project').order('project');
-    const unique=[...new Set((data||[]).map(r=>r.project).filter(Boolean))];
-    const sel=document.getElementById('inp-customer'); if(!sel) return;
-    sel.innerHTML='<option value="">— Select Contract / Country —</option>';
-    unique.forEach(c=>sel.innerHTML+=`<option value="${c}">${c}</option>`);
-    if(state.formData.client_country) sel.value=state.formData.client_country;
-  } catch(e){}
+    const {data} = await supabaseClient
+      .from('countries')
+      .select('name')
+      .order('name');
+    const sel = document.getElementById('inp-country'); if (!sel) return;
+    sel.innerHTML = '<option value="">— Select Country —</option>';
+    (data || []).forEach(c => sel.innerHTML += `<option value="${c.name}">${c.name}</option>`);
+    if (state.formData.client_country) sel.value = state.formData.client_country;
+  } catch(e) {
+    console.warn('[loadCountries] Failed:', e);
+  }
+}
+
+// ─── CONTRACT DROPDOWN — self-service list, but LIVE-LINKED to serials ───────
+// Sourced from a "contracts" table the admin maintains directly in Supabase.
+// IMPORTANT: the contract name selected here is the exact key checked against
+// weapon_serials.project for the serial hard-block. Adding a contract name
+// here makes it *selectable* — it only becomes *usable* once serials for
+// that exact contract name have also been loaded into weapon_serials.
+async function loadContracts() {
+  try {
+    const {data} = await supabaseClient
+      .from('bluecard_contracts')
+      .select('name')
+      .order('name');
+    const sel = document.getElementById('inp-contract'); if (!sel) return;
+    sel.innerHTML = '<option value="">— Select Contract —</option>';
+    (data || []).forEach(c => sel.innerHTML += `<option value="${c.name}">${c.name}</option>`);
+    if (state.formData.contract_name) {
+      sel.value = state.formData.contract_name;
+      // Load serials for the restored contract
+      await loadSerialsForProject(state.formData.contract_name);
+    }
+  } catch(e) {
+    console.warn('[loadContracts] Failed:', e);
+  }
+}
+
+// ─── SERIAL-PROJECT LINKING ────────────────────────────────────────────────────
+// When operator selects a contract, load all serial numbers for that project.
+// validateSerialExists() then checks only within this project's serials.
+// This ensures RLL serials can only be used on RLL contracts and vice versa.
+state._projectSerials = null; // null = no project selected yet (check all)
+
+async function loadSerialsForProject(project) {
+  if (!project) { state._projectSerials = null; return; }
+  try {
+    const {data} = await supabaseClient
+      .from('weapon_serials')
+      .select('serial_number,status,card_type')
+      .eq('project', project);
+    state._projectSerials = data || [];
+    const count = state._projectSerials.length;
+    const statusEl = document.getElementById('ocr-status');
+    if (statusEl) {
+      statusEl.textContent =
+        `📋 ${project} — ${count} serial(s) available for this contract`;
+    }
+    console.log(`[SerialProject] Loaded ${count} serials for "${project}"`);
+  } catch(e) {
+    console.warn('[SerialProject] Failed to load serials:', e);
+    state._projectSerials = null;
+  }
 }
 
 // ─── CHECKS ───────────────────────────────────────────────────────────────────
@@ -952,7 +1037,7 @@ function refreshSignoff() {
   document.getElementById('so-cardtype').textContent=cfg.label;
   document.getElementById('so-serial').textContent=state.formData.launcher_serial||'—';
   document.getElementById('so-trolley').textContent=`${state.formData.trolley_number||'—'} / Pos ${state.formData.trolley_position||'—'}`;
-  document.getElementById('so-client').textContent=state.formData.client_country||'—';
+  document.getElementById('so-client').textContent=`${state.formData.contract_name||'—'} — ${state.formData.client_country||'—'}`;
   const done=Object.values(state.checks).filter(v=>v&&v.result).length;
   const fails=Object.values(state.checks).filter(v=>v&&(v.result==='FAIL'||v.result==='NO-GO')).length;
   document.getElementById('so-checks').textContent=`${done} / ${total}`;
@@ -1172,6 +1257,43 @@ async function autoSaveIdentity() {
   } finally {
     _autoSaving = false;
   }
+}
+
+
+// ─── SERIAL VALIDATION OVERRIDE ───────────────────────────────────────────────
+// Overrides validateSerialExists from supabase.js.
+// If a project has been selected (state._projectSerials is loaded),
+// validates the serial ONLY within that project's serials.
+// This prevents using an RLL serial on an XRGL contract and vice versa.
+async function validateSerialExists(serial) {
+  if (!supabaseClient) return { exists: true, status: 'UNKNOWN' };
+
+  // ── Project-scoped check ──────────────────────────────────────────────────
+  if (state._projectSerials !== null) {
+    // We have a specific project selected — check only within those serials
+    const match = state._projectSerials.find(
+      r => (r.serial_number || '').toUpperCase() === serial.toUpperCase()
+    );
+    if (!match) {
+      const project = state.formData.contract_name || 'selected contract';
+      return {
+        exists: false,
+        status: null,
+        reason: `Serial "${serial}" is not in project "${project}". ` +
+                `Check you have selected the correct contract.`
+      };
+    }
+    return { exists: true, status: match.status };
+  }
+
+  // ── No project selected — check whole register (fallback) ────────────────
+  const { data } = await supabaseClient
+    .from('weapon_serials')
+    .select('serial_number,status')
+    .eq('serial_number', serial)
+    .limit(1);
+  if (!data || data.length === 0) return { exists: false, status: null };
+  return { exists: true, status: data[0].status };
 }
 
 // ─── SERIAL NORMALISATION ─────────────────────────────────────────────────────
