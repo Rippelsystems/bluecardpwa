@@ -38,7 +38,14 @@
       <label for="inp-operator" style="color:#8fa3c0;">Operator Number</label>
       <input type="text" id="inp-operator" placeholder="e.g. 042" inputmode="numeric" autocomplete="off" style="background:#f2f4f7;color:#111;">
     </div>
-    <button class="btn btn-primary" onclick="handleLogin()" style="margin-top:6px;">Start Session</button>
+    <div class="field-group">
+      <label for="inp-operator-pin" style="color:#8fa3c0;">PIN</label>
+      <input type="password" id="inp-operator-pin" placeholder="Enter your PIN" inputmode="numeric"
+             maxlength="6" autocomplete="off" style="background:#f2f4f7;color:#111;letter-spacing:0.3em;">
+    </div>
+    <div id="login-error" style="display:none;color:#e05050;font-size:12px;font-weight:600;
+         margin-bottom:10px;text-align:center;"></div>
+    <button class="btn btn-primary" id="btn-login" onclick="handleLogin()" style="margin-top:6px;">Start Session</button>
     <button class="btn btn-secondary" onclick="window.location.href='dashboard.html'" style="margin-top:10px;background:transparent;border-color:#1e3354;color:#8fa3c0;">📊 Project Dashboard</button>
   </div>
 
@@ -46,7 +53,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:6px;font-size:10px;color:#2a4060;letter-spacing:0.06em;text-align:center;font-family:monospace;">
-    v1.6 · 26 Aug 2026
+    v1.7 · 12 Sep 2026
   </div>
 
 </section>
