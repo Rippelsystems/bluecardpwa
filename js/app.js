@@ -127,10 +127,52 @@ function showSwitchOperator() {
 }
 
 // ─── LOGIN ─────────────────────────────────────────────────────────────────────
-function handleLogin() {
-  const op = document.getElementById('inp-operator').value.trim();
-  const ct = document.getElementById('inp-card-type').value;
-  if (!op) { showToast('Enter your operator number','error'); return; }
+async function handleLogin() {
+  const op  = document.getElementById('inp-operator').value.trim();
+  const pin = document.getElementById('inp-operator-pin')?.value.trim();
+  const ct  = document.getElementById('inp-card-type').value;
+  const btn = document.getElementById('btn-login');
+  const errEl = document.getElementById('login-error');
+
+  if (errEl) errEl.style.display = 'none';
+
+  if (!op)  { showToast('Enter your operator number','error'); return; }
+  if (!pin) { showToast('Enter your PIN','error'); return; }
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+
+  // ── Verify via a server-side function — the tablet never sees any PIN,
+  // only a true/false answer back. This means the PIN values themselves
+  // are never exposed through the browser, even to someone inspecting
+  // network traffic or using dev tools.
+  let verified = false;
+  try {
+    const {data, error} = await supabaseClient.rpc('verify_operator_pin', {
+      p_operator_number: op,
+      p_pin: pin
+    });
+    if (error) throw error;
+    verified = data === true;
+  } catch(e) {
+    console.error('[Login] PIN verification failed:', e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Start Session'; }
+    showToast('Could not verify PIN — check connection and try again', 'error');
+    return;
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Start Session'; }
+
+  if (!verified) {
+    // Deliberately vague — don't reveal whether the operator number or
+    // the PIN was wrong, same principle as any login screen.
+    if (errEl) { errEl.style.display = 'block'; errEl.textContent = '❌ Incorrect operator number or PIN'; }
+    showToast('❌ Incorrect operator number or PIN', 'error');
+    const pinInput = document.getElementById('inp-operator-pin');
+    if (pinInput) { pinInput.value = ''; pinInput.focus(); }
+    return;
+  }
+
+  // ── PIN verified — proceed exactly as before ──────────────────────────
   state.operator = op;
   state.cardType = ct;
   const resumeOp=document.getElementById('resume-op'); if(resumeOp) resumeOp.textContent=op;
