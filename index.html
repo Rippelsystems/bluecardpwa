@@ -41,7 +41,9 @@
     <div class="field-group">
       <label for="inp-operator-pin" style="color:#8fa3c0;">PIN</label>
       <input type="password" id="inp-operator-pin" placeholder="Enter your PIN" inputmode="numeric"
-             maxlength="6" autocomplete="off" style="background:#f2f4f7;color:#111;letter-spacing:0.3em;">
+             maxlength="6" autocomplete="off"
+             style="background:#f2f4f7;color:#111;letter-spacing:0.25em;
+                    font-size:22px;padding:14px 12px;height:auto;">
     </div>
     <div id="login-error" style="display:none;color:#e05050;font-size:12px;font-weight:600;
          margin-bottom:10px;text-align:center;"></div>
@@ -53,7 +55,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:6px;font-size:10px;color:#2a4060;letter-spacing:0.06em;text-align:center;font-family:monospace;">
-    v1.7 · 12 Sep 2026
+    v1.9 · 12 Sep 2026
   </div>
 
 </section>
@@ -293,12 +295,4 @@
     var loginLogo = document.getElementById('login-logo-img');
     if (loginLogo) loginLogo.src = RIPPEL_LOGO_BANNER;
     document.querySelectorAll('.rippel-logo-main').forEach(function(img) {
-      img.src = RIPPEL_LOGO;
-    });
-  }
-  setLogos();
-})();
-</script>
-
-</body>
-</html>
+      im
