@@ -149,9 +149,13 @@ async function loadResumeScreen() {
   const listEl=document.getElementById('my-cards-list');
   listEl.innerHTML='<div class="loading-msg">Loading…</div>';
   try {
+    // Show ALL incomplete cards, not just the current operator's own —
+    // a shared factory-floor tool must not hide other operators' in-progress
+    // work, or someone can end up starting a duplicate for the same
+    // trolley/position without ever knowing a card already exists.
     const {data}=await supabaseClient.from('weapon_builds')
-      .select('id,launcher_serial,trolley_number,trolley_position,client_country,contract_name,created_at,status,card_type,checks')
-      .eq('operator_number',state.operator)
+      .select('id,launcher_serial,trolley_number,trolley_position,client_country,contract_name,created_at,status,card_type,checks,operator_number')
+      .neq('status','COMPLETE')
       .order('created_at',{ascending:false}).limit(20);
     if (!data||data.length===0) {
       listEl.innerHTML='<div class="loading-msg">No incomplete cards — start a new one below</div>';
@@ -174,6 +178,7 @@ async function loadResumeScreen() {
           </div>
           <div style="font-size:11px;color:var(--text-dim);margin-bottom:2px;">
             Trolley ${r.trolley_number||'—'} · Pos ${r.trolley_position||'—'} · ${r.contract_name||r.client_country||'—'} · ${formatDate(new Date(r.created_at))}
+            ${r.operator_number && r.operator_number !== state.operator ? ` · <span style="color:var(--accent);font-weight:600;">Started by OP ${r.operator_number}</span>` : ''}
           </div>
           <div style="font-size:11px;color:${fails>0?'#e05050':'var(--text-dim)'};">${checksLabel}</div>
         </div>`;}).join('');
@@ -320,7 +325,7 @@ function buildIdentityGrid() {
     </div>
     <div class="card-cell">
       <label>Trolley Position</label>
-      <select id="inp-trolley-pos" onchange="scheduleAutoSave()"></select>
+      <select id="inp-trolley-pos" onchange="checkTrolleyPositionCollision();scheduleAutoSave()"></select>
     </div>
     <div class="card-cell">
       <label>Year of Manufacturing</label>
@@ -713,7 +718,54 @@ async function autoSuggestTrolley() {
   } catch(e){}
 }
 
-function handleTrolleyChange() { const tp=document.getElementById('inp-trolley-pos'); if(tp) tp.value=1; }
+function handleTrolleyChange() {
+  const tp=document.getElementById('inp-trolley-pos'); if(tp) tp.value=1;
+  checkTrolleyPositionCollision();
+}
+
+// ─── TROLLEY/POSITION COLLISION GUARD ─────────────────────────────────────────
+// Fires whenever trolley or position changes on a NEW (unsaved) card.
+// If an incomplete card already exists at that exact trolley/position,
+// warn immediately and offer to jump straight to it — this is the direct
+// safeguard against the exact incident where a duplicate card got created
+// because the existing one belonged to a different operator and was
+// invisible on the Resume screen.
+async function checkTrolleyPositionCollision() {
+  // Only relevant when starting a brand-new card — resuming an existing
+  // one already has state.buildId set, so there's nothing to collide with.
+  if (state.buildId) return;
+
+  const t = document.getElementById('inp-trolley-no')?.value;
+  const p = document.getElementById('inp-trolley-pos')?.value;
+  if (!t || !p) return;
+
+  try {
+    const {data} = await supabaseClient.from('weapon_builds')
+      .select('id,launcher_serial,operator_number,status')
+      .eq('trolley_number', parseInt(t))
+      .eq('trolley_position', parseInt(p))
+      .neq('status','COMPLETE')
+      .limit(1);
+
+    if (data && data.length > 0) {
+      const existing = data[0];
+      const proceed = confirm(
+        `⚠ A card already exists at Trolley ${t} / Pos ${p}:\n\n` +
+        `  Serial: ${existing.launcher_serial || '(not yet entered)'}\n` +
+        `  Started by: OP ${existing.operator_number}\n` +
+        `  Status: ${existing.status}\n\n` +
+        `Tap OK to open that existing card instead, or Cancel to keep ` +
+        `filling in a new one (only do this if you're sure this is a ` +
+        `genuinely different build).`
+      );
+      if (proceed) {
+        loadBuild(existing.id);
+      }
+    }
+  } catch(e) {
+    console.warn('[TrolleyCollision] Check failed:', e);
+  }
+}
 
 function populateYear() {
   const sel=document.getElementById('inp-year'); if(!sel||sel.options.length>1) return;
