@@ -93,8 +93,56 @@
     <div class="divider"></div>
     <button class="btn btn-primary" onclick="startNewCard()">+ Start New Build Card</button>
     <button class="btn btn-secondary" style="margin-top:8px;" onclick="changeCardType()">🔄 Change Card Type / End Session</button>
+
+    <div class="divider"></div>
+    <div class="section-head"><span class="section-num">D</span><h2>Factory Acceptance Test (FAT)</h2></div>
+    <select id="inp-fat-type" style="font-size:14px;margin-bottom:8px;">
+      <option value="">Select card type…</option>
+      <option value="RLL">RLL 37/38</option>
+      <option value="XRGL40">XRGL40</option>
+      <option value="GRN40">GRN40</option>
+    </select>
+    <button class="btn btn-primary" onclick="openFatPdi('FAT')">🧪 Open FAT</button>
+
+    <div class="divider"></div>
+    <div class="section-head"><span class="section-num">E</span><h2>Pre-Delivery Inspection (PDI)</h2></div>
+    <select id="inp-pdi-type" style="font-size:14px;margin-bottom:8px;">
+      <option value="">Select card type…</option>
+      <option value="RLL">RLL 37/38</option>
+      <option value="XRGL40">XRGL40</option>
+      <option value="GRN40">GRN40</option>
+    </select>
+    <button class="btn btn-primary" onclick="openFatPdi('PDI')">📦 Open PDI</button>
   </div>
 </section>
+
+<!-- ══ FAT / PDI ════════════════════════════════════════════════════════════ -->
+<section id="screen-fatpdi" class="screen">
+  <div class="topbar">
+    <span class="card-badge" id="fatpdi-stage-badge">FAT</span>
+    <span class="title" id="fatpdi-title">FAT — RLL 37/38</span>
+    <span class="operator-tag">OP <span id="fatpdi-op">—</span></span>
+  </div>
+  <div class="content">
+    <div id="fatpdi-doc-footer" style="font-size:11px;color:var(--text-dim,#8fa3c0);margin-bottom:10px;font-family:monospace;"></div>
+    <div class="section-head"><span class="section-num">1</span><h2>Units Ready for Inspection</h2></div>
+    <div id="fatpdi-empty-msg" style="display:none;color:var(--text-dim,#8fa3c0);font-size:13px;padding:16px 0;"></div>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border,#1e3354);border-radius:8px;">
+      <table id="fatpdi-grid" class="fatpdi-table" style="border-collapse:collapse;width:100%;font-size:12px;"></table>
+    </div>
+    <div class="divider"></div>
+    <button class="btn btn-primary" id="btn-fatpdi-save" onclick="saveFatPdi()">💾 Save All</button>
+    <button class="btn btn-secondary" style="margin-top:8px;" onclick="goToResume()">← Back to Home</button>
+  </div>
+</section>
+
+<style>
+  .fatpdi-table th, .fatpdi-table td { padding:6px 8px; border-bottom:1px solid var(--border,#1e3354); text-align:left; }
+  .fatpdi-toggle { width:28px;height:28px;border-radius:6px;border:1px solid var(--border,#1e3354);
+                   background:transparent;color:var(--text,#fff);font-weight:700;margin:0 2px;cursor:pointer; }
+  .fatpdi-toggle.is-pass { background:#1a9e5c;border-color:#1a9e5c;color:#fff; }
+  .fatpdi-toggle.is-fail { background:#d93025;border-color:#d93025;color:#fff; }
+</style>
 
 <!-- ══ IDENTITY ══════════════════════════════════════════════════════════════ -->
 <section id="screen-identity" class="screen">
@@ -285,7 +333,9 @@
 <script src="js/supabase.js"></script>
 <script src="js/logo.js"></script>
 <script src="js/cardconfig.js"></script>
+<script src="js/fatpdi_config.js"></script>
 <script src="js/app.js"></script>
+<script src="js/fatpdi.js"></script>
 <script src="js/camera_enhanced.js"></script>
 
 <script>
