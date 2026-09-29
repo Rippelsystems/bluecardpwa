@@ -201,6 +201,41 @@
       border-radius: 4px;
     }
   </style>
+  <!-- ── SITE ACCESS GATE (Rippel Matrix BCDS) — see js/sitegate.js ───────── -->
+  <style>
+    html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
+    #bcds-gate { position: fixed; inset: 0; z-index: 99999; background: #0a1628;
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+      font-family: 'DM Sans', system-ui, sans-serif; }
+    #bcds-gate .bcds-card { width: 100%; max-width: 360px; background: #111f38;
+      border: 1px solid #1e3354; border-radius: 14px; padding: 28px 24px; }
+    #bcds-gate .bcds-brand { color: #4a9eff; font-size: 10px; font-weight: 700;
+      letter-spacing: 0.18em; text-align: center; }
+    #bcds-gate .bcds-title { color: #fff; font-size: 26px; font-weight: 800;
+      text-align: center; margin-top: 8px; }
+    #bcds-gate .bcds-sub { color: #6f86a8; font-size: 12px; text-align: center;
+      margin: 4px 0 22px; }
+    #bcds-gate label { display: block; color: #8fa3c0; font-size: 11px; font-weight: 700;
+      letter-spacing: 0.08em; margin-bottom: 6px; }
+    #bcds-gate input { width: 100%; box-sizing: border-box; padding: 13px 14px;
+      font-size: 16px; border-radius: 8px; border: 1px solid #1e3354; background: #f1f3f6;
+      color: #0a1628; outline: none; }
+    #bcds-gate #bcds-err { color: #ff6b6b; font-size: 12px; font-weight: 600;
+      min-height: 18px; margin: 8px 0 4px; text-align: center; }
+    #bcds-gate button { width: 100%; padding: 13px; font-size: 15px; font-weight: 700;
+      border: none; border-radius: 8px; background: #1a6cf0; color: #fff; cursor: pointer; }
+    #bcds-gate button:disabled { opacity: 0.6; }
+    #bcds-gate .bcds-note { color: #4a6a8a; font-size: 11px; text-align: center; margin-top: 12px; }
+  </style>
+  <script>
+    // Hide the page immediately unless this device already passed the site gate
+    // (key must match SITE_GATE_KEY in js/sitegate.js)
+    (function () {
+      var ok = false;
+      try { var v = JSON.parse(localStorage.getItem('bcds_site_access_v1') || 'null'); ok = !!(v && v.until > Date.now()); } catch (e) {}
+      if (!ok) document.documentElement.classList.add('bcds-locked');
+    })();
+  </script>
 </head>
 <body>
 
@@ -240,6 +275,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="js/supabase.js"></script>
+<script src="js/sitegate.js"></script>
 <script>
   let allSerials   = [];
   let currentFilter = 'ALL';
