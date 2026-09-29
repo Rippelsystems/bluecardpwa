@@ -196,7 +196,7 @@ async function loadResumeScreen() {
     // work, or someone can end up starting a duplicate for the same
     // trolley/position without ever knowing a card already exists.
     const {data}=await supabaseClient.from('weapon_builds')
-      .select('id,launcher_serial,trolley_number,trolley_position,client_country,contract_name,created_at,status,card_type,checks,operator_number')
+      .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,created_at,status,card_type,checks,operator_number')
       .neq('status','COMPLETE')
       .order('created_at',{ascending:false}).limit(20);
     if (!data||data.length===0) {
@@ -215,7 +215,7 @@ async function loadResumeScreen() {
         <div class="resume-card" onclick="loadBuild('${r.id}')">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
             <span style="background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;">${r.card_type||'RLL'}</span>
-            <span style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--accent);">${r.launcher_serial||'No serial yet'}</span>
+            <span style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--accent);">${_rowIdentifierSerial(r)||'No serial yet'}</span>
             <span style="margin-left:auto;font-size:10px;font-weight:700;color:${stColour};background:${stColour}18;padding:2px 8px;border-radius:4px;border:1px solid ${stColour}44;">${stLabel}</span>
           </div>
           <div style="font-size:11px;color:var(--text-dim);margin-bottom:2px;">
@@ -231,7 +231,12 @@ async function loadResumeScreen() {
 async function findBySerial() {
   const serial=document.getElementById('inp-find-serial').value.trim().toUpperCase();
   if (!serial){showToast('Enter a serial number','error');return;}
-  const {data}=await supabaseClient.from('weapon_builds').select('id,card_type').eq('launcher_serial',serial).neq('status','COMPLETE').limit(1);
+  let {data}=await supabaseClient.from('weapon_builds').select('id,card_type').eq('launcher_serial',serial).neq('status','COMPLETE').limit(1);
+  // GRN40 cards are identified by sight_serial (no launcher_serial at all)
+  if (!data||data.length===0) {
+    ({data}=await supabaseClient.from('weapon_builds').select('id,card_type')
+      .eq('sight_serial',serial).eq('card_type','GRN40').neq('status','COMPLETE').limit(1));
+  }
   if (data&&data.length>0) loadBuild(data[0].id);
   else showToast('No incomplete card found','warn');
 }
@@ -257,15 +262,17 @@ async function loadBuild(id) {
   if (!data||data.length===0){showToast('Could not load','error');return;}
   const row=data[0];
   state.buildId=row.id; state.formData={...row};
-  state.checks=row.checks||{}; state.serialVerified=!!row.launcher_serial;
   state.cardType=row.card_type||'RLL';
+  // A saved row's identifying serial was already validated when it was
+  // first confirmed — GRN40 = sight_serial, RLL/XRGL40 = launcher_serial.
+  state.checks=row.checks||{}; state.serialVerified=!!_rowIdentifierSerial(row);
   updateCardBadges();
   buildIdentityGrid();
   _injectAutoSaveIndicator();
   refreshIdentity();
   show('screen-identity');
   populateTrolley(); populateYear(); loadCountries(); loadContracts();
-  loadActivityLog(row.launcher_serial); initOCR();
+  loadActivityLog(_rowIdentifierSerial(row)); initOCR();
 }
 
 function startNewCard() {
@@ -303,14 +310,15 @@ async function cancelBuildCard() {
   }
 
   try {
-    if (state.formData.launcher_serial) {
+    const unitSerial = _unitIdentifierSerial();
+    if (unitSerial) {
       await logActivity('BUILD_CANCELLED', { cancelled_by: state.operator }, null);
     }
     await supabaseClient.from('weapon_builds').delete().eq('id', state.buildId);
-    if (state.formData.launcher_serial) {
+    if (unitSerial) {
       await supabaseClient.from('weapon_serials')
         .update({ status: 'UNBUILT' })
-        .eq('serial_number', state.formData.launcher_serial);
+        .eq('serial_number', unitSerial);
     }
     showToast('✅ Card cancelled and deleted', 'ok');
   } catch (e) {
@@ -341,12 +349,14 @@ function buildIdentityGrid() {
   if (state.cardType === 'GRN40') {
     grid.innerHTML = `
       <div class="card-cell span2">
-        <label class="yellow">Sight Serial No</label>
+        <label class="yellow">Sight Serial No ★</label>
         <div class="serial-row">
-          <input type="text" id="inp-sight-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+          <input type="text" id="inp-sight-serial" placeholder="Tap 📷 or type" autocapitalize="characters" spellcheck="false" onchange="resetSightConfirm()">
           <img class="serial-thumb" id="thumb-inp-sight-serial">
           <button class="cam-btn" onclick="captureSerial('inp-sight-serial','photo_sight', true)">📷</button>
+          <button class="cam-btn" id="btn-sight-confirm" style="background:var(--accent);color:#fff;" onclick="confirmSightSerial()">✓</button>
         </div>
+        <div id="sight-verified" style="display:none;font-size:12px;font-weight:700;margin-top:6px;"></div>
       </div>
       <div class="card-cell">
         <label>Country</label>
@@ -534,6 +544,11 @@ function refreshIdentity() {
     const lw=document.getElementById('launcher-confirm-wrap');
     if(lv) lv.style.display='block'; if(lw) lw.style.display='none';
   }
+  if (state.cardType==='GRN40' && state.serialVerified && state.formData.sight_serial) {
+    const sv=document.getElementById('sight-verified');
+    if(sv){ sv.style.display='block'; sv.style.color='var(--pass)';
+            sv.textContent=`✓ Sight serial verified — ${state.formData.sight_serial}`; }
+  }
   const logWrap=document.getElementById('activity-log-wrap');
   if(logWrap) logWrap.style.display=state.buildId?'block':'none';
   updateCardBadges();
@@ -682,6 +697,149 @@ async function confirmLauncherSerial() {
   autoSaveIdentity();
 }
 
+// ─── GRN40 SIGHT SERIAL CONFIRM ───────────────────────────────────────────────
+// GRN40's Blue Card IS the sight unit, so sight_serial is its identity —
+// the equivalent of launcher_serial on RLL/XRGL40. Same gates as
+// confirmLauncherSerial(): normalise → register check (project-scoped via
+// validateSerialExists) → duplicate block → confirm + auto-save.
+// Differences, by design:
+//   - Single entry + ✓ (the GRN40 row has no second "re-type" box).
+//   - Duplicate check is self-contained (_findDuplicateSight) rather than
+//     supabase.js's checkDuplicateSerial(), which is launcher-based, and it
+//     runs on resume too (excluding this card's own row), not only on new cards.
+
+// Any edit to a confirmed sight serial drops verification — otherwise
+// autoSaveIdentity() would read the edited, unvalidated value straight
+// from the input box and save it over the confirmed one.
+function resetSightConfirm() {
+  if (state.cardType !== 'GRN40') return;
+  state.serialVerified = false;
+  const inp = document.getElementById('inp-sight-serial');
+  if (inp && inp.value) {
+    const norm = normaliseSerial(inp.value, 'GRN40');
+    if (norm !== inp.value) inp.value = norm;
+  }
+  if (inp) { inp.style.borderBottomColor = ''; inp.style.backgroundColor = ''; }
+  const sv = document.getElementById('sight-verified');
+  if (sv) {
+    sv.style.display = inp && inp.value ? 'block' : 'none';
+    sv.style.color   = 'var(--warn)';
+    sv.textContent   = 'Tap ✓ to confirm the sight serial';
+  }
+}
+
+// Returns the first OTHER GRN40 build already using this sight serial
+// (IN PROGRESS or COMPLETE), or null. Throws on query failure so the
+// caller can block rather than let a possible duplicate through.
+async function _findDuplicateSight(serial) {
+  let q = supabaseClient.from('weapon_builds')
+    .select('id,status,trolley_number,trolley_position,operator_number')
+    .eq('card_type', 'GRN40')
+    .eq('sight_serial', serial)
+    .in('status', ['IN PROGRESS', 'COMPLETE']);
+  if (state.buildId) q = q.neq('id', state.buildId);
+  const { data, error } = await q.limit(1);
+  if (error) throw error;
+  return (data && data.length > 0) ? data[0] : null;
+}
+
+// Shows a duplicate-block message in the #sight-verified div. Shared by
+// confirmSightSerial() and the supervisor-override path.
+function _showSightDuplicate(serial, dupe) {
+  const st = (dupe.status || 'EXISTS').toUpperCase();
+  const msg = st === 'COMPLETE'
+    ? `🚫 DUPLICATE — ${serial} already has a COMPLETED GRN40 build card`
+    : `⚠ ${serial} is already IN PROGRESS on another GRN40 card`;
+  const detail = st === 'COMPLETE'
+    ? 'This sight has already been built and signed off. Contact QA.'
+    : `Trolley ${dupe.trolley_number||'?'} · Pos ${dupe.trolley_position||'?'} · OP ${dupe.operator_number||'?'}`;
+  showToast(msg, 'error');
+  const sv = document.getElementById('sight-verified');
+  if (sv) {
+    sv.style.display = 'block';
+    sv.style.color   = 'var(--fail)';
+    sv.innerHTML     = `${msg}<br><small style="color:#ffaaaa">${detail}</small>`;
+  }
+  const inp = document.getElementById('inp-sight-serial');
+  if (inp) inp.style.borderBottomColor = 'var(--fail)';
+}
+
+async function confirmSightSerial() {
+  const inp = document.getElementById('inp-sight-serial');
+  const btn = document.getElementById('btn-sight-confirm');
+  const sv  = document.getElementById('sight-verified');
+
+  // ── STEP 1: Normalise (uppercase, trim, collapse spaces, keep hyphen) ──
+  const s = normaliseSerial(inp?.value || '', 'GRN40');
+  if (inp) inp.value = s;
+
+  // ── STEP 2: Must be filled, minimum length ─────────────────────────────
+  if (!s) { showToast('Enter the sight serial first', 'error'); return; }
+  if (s.length < 4) { showToast('Serial too short — check and re-enter', 'error'); return; }
+
+  const _resetBtn = () => { if (btn) { btn.textContent = '✓'; btn.disabled = false; } };
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  state.serialVerified = false;
+
+  // ── STEP 3: Register check — HARD BLOCK if not found ──────────────────
+  const validation = await validateSerialExists(s);
+  if (!validation.exists) {
+    showToast(`🚫 BLOCKED — "${s}" not in serial register`, 'error');
+    if (sv) {
+      sv.style.display = 'block';
+      sv.style.color   = 'var(--fail)';
+      sv.innerHTML = `
+        <div style="color:var(--fail);font-weight:700;margin-bottom:6px;">
+          🚫 "${s}" not found in this contract.
+        </div>
+        <div style="font-size:12px;color:#ffaaaa;margin-bottom:10px;font-weight:400;">
+          ${validation.reason || 'Check the serial number carefully — a single wrong digit or extra space will fail.'}<br>
+          Also check you have selected the correct contract.<br>
+          If you are sure this serial is correct, ask your supervisor to approve.
+        </div>
+        <button id="btn-override-request"
+          style="background:#c0392b;color:#fff;border:none;padding:8px 18px;
+                 border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;">
+          🔐 Supervisor Override
+        </button>
+        <span id="override-status" style="display:none;margin-left:10px;font-size:12px;"></span>`;
+      document.getElementById('btn-override-request')
+        .addEventListener('click', () => requestSupervisorOverride(s));
+    }
+    if (inp) inp.style.borderBottomColor = 'var(--fail)';
+    _resetBtn();
+    logActivity('SERIAL_NOT_IN_REGISTER', {serial_attempted: s, operator: state.operator}, null);
+    return;
+  }
+
+  // ── STEP 4: Duplicate check — block if any OTHER GRN40 card uses it ────
+  let dupe;
+  try {
+    dupe = await _findDuplicateSight(s);
+  } catch (e) {
+    console.error('[SightConfirm] duplicate check failed', e);
+    showToast('⚠ Could not check for duplicates — check connection and tap ✓ again', 'error');
+    _resetBtn();
+    return;
+  }
+  if (dupe) { _showSightDuplicate(s, dupe); _resetBtn(); return; }
+
+  _resetBtn();
+
+  // ── STEP 5: All checks passed — confirmed ─────────────────────────────
+  state.formData.sight_serial = s;
+  state.serialVerified = true;
+  if (inp) { inp.style.borderBottomColor = 'var(--pass)'; inp.style.backgroundColor = ''; }
+  if (sv) {
+    sv.style.display = 'block';
+    sv.style.color   = 'var(--pass)';
+    sv.textContent   = `✓ Sight serial confirmed and registered — ${s}`;
+  }
+  showToast(`✓ Sight serial confirmed — ${s}`, 'ok');
+  // Auto-save immediately, same as launcher confirm
+  autoSaveIdentity();
+}
+
 async function saveIdentity() {
   // Collect ALL fields from form — including selects
   const map = getIdentityMap();
@@ -699,6 +857,13 @@ async function saveIdentity() {
     return;
   }
 
+  // GRN40 equivalent — sight serial is the unit's identity
+  const sightInput = document.getElementById('inp-sight-serial')?.value.trim();
+  if (state.cardType === 'GRN40' && sightInput && !state.serialVerified) {
+    showToast('❌ Please confirm the sight serial first — tap ✓ button', 'error');
+    return;
+  }
+
   // Block creating a BRAND NEW record with no identifying serial at all —
   // this is what produced "ghost" IN PROGRESS cards with no serial that
   // just sit in the incomplete list forever. Updating an EXISTING card
@@ -708,7 +873,7 @@ async function saveIdentity() {
     const idField = state.cardType === 'GRN40' ? 'inp-sight-serial' : 'inp-launcher-serial';
     const idLabel = state.cardType === 'GRN40' ? 'Sight Serial' : 'Launcher Serial';
     const hasSerial = state.cardType === 'GRN40'
-      ? !!document.getElementById('inp-sight-serial')?.value.trim()
+      ? (state.serialVerified && !!sightInput)
       : (state.serialVerified && !!launcherInput);
     if (!hasSerial) {
       showToast(`❌ Enter and confirm the ${idLabel} before saving a new card`, 'error');
@@ -716,8 +881,10 @@ async function saveIdentity() {
     }
   }
 
-  // Warn if launcher photo not taken — it is required for customs/export docs
-  if (state.serialVerified && !state.formData.photo_launcher) {
+  // Warn if launcher photo not taken — it is required for customs/export docs.
+  // RLL/XRGL40 only: GRN40 has no launcher, so this would otherwise block
+  // every GRN40 save once its sight serial is verified.
+  if (state.cardType !== 'GRN40' && state.serialVerified && !state.formData.photo_launcher) {
     showToast('📷 Please take a photo of the Launcher Serial before saving', 'warn');
     const statusEl = document.getElementById('ocr-status');
     if (statusEl) {
@@ -745,27 +912,52 @@ async function saveIdentity() {
   if (error) { console.error(error); showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
 
   // Update serial register — mark as IN PROGRESS with trolley info
-  if (state.formData.launcher_serial) {
+  const regSerial = _unitIdentifierSerial();
+  if (regSerial) {
     const serialUpdate = { status: 'IN PROGRESS' };
     if (state.formData.trolley_number)   serialUpdate.trolley_number   = state.formData.trolley_number;
     if (state.formData.trolley_position) serialUpdate.trolley_position = state.formData.trolley_position;
     const { error: serErr } = await supabaseClient.from('weapon_serials')
       .update(serialUpdate)
-      .eq('serial_number', state.formData.launcher_serial);
+      .eq('serial_number', regSerial);
     if (serErr) console.warn('Serial status update failed:', serErr);
   }
 
   await logActivity('IDENTITY_SAVE', state.formData, null);
   showToast('Identity saved ✓', 'ok');
-  loadActivityLog(state.formData.launcher_serial);
+  loadActivityLog(_unitIdentifierSerial());
 }
 
 // ─── ACTIVITY LOG ─────────────────────────────────────────────────────────────
+// GRN40 builds have no launcher_serial — sight_serial IS their identity.
+// Activity logging must fall back to it, or GRN40 work never gets logged
+// at all (which is exactly why Operator Activity showed 0 events for
+// operators who only worked on GRN40 cards). Reuses the existing
+// weapon_build_sessions.launcher_serial column to hold whichever serial
+// applies, rather than adding a new column — same column Audit Trail and
+// Operator Activity already search by.
+//
+// Card-type aware: GRN40 = sight_serial; RLL/XRGL40 = launcher_serial only.
+// (An XRGL40 also carries a sight_serial — the GRN40 sight paired to it —
+// but that is NOT the gun's identity, so it must never be used as the
+// XRGL40's audit/register key, even before its launcher serial is set.)
+function _unitIdentifierSerial() {
+  if (state.cardType === 'GRN40') return state.formData.sight_serial || null;
+  return state.formData.launcher_serial || null;
+}
+
+// Same rule applied to a raw weapon_builds row (Resume list, loadBuild).
+function _rowIdentifierSerial(row) {
+  if (!row) return null;
+  return (row.card_type === 'GRN40') ? (row.sight_serial || null) : (row.launcher_serial || null);
+}
+
 async function logActivity(action,fields,checks) {
-  if(!state.formData.launcher_serial) return;
+  const unitSerial = _unitIdentifierSerial();
+  if(!unitSerial) return;
   try {
     await supabaseClient.from('weapon_build_sessions').insert({
-      launcher_serial:state.formData.launcher_serial,
+      launcher_serial:unitSerial,
       operator_number:state.operator,action,
       fields_updated:fields?JSON.stringify(fields):null,
       checks_updated:checks?JSON.stringify(checks):null,
@@ -835,26 +1027,52 @@ async function checkTrolleyPositionCollision() {
   if (!t || !p) return;
 
   try {
-    const {data} = await supabaseClient.from('weapon_builds')
-      .select('id,launcher_serial,operator_number,status')
+    // Scope to this card type too — RLL/XRGL40/GRN40 trolleys are separate
+    // lines and a trolley/position pair can legitimately repeat across them.
+    const base = supabaseClient.from('weapon_builds')
+      .select('id,launcher_serial,sight_serial,operator_number,status')
       .eq('trolley_number', parseInt(t))
       .eq('trolley_position', parseInt(p))
-      .neq('status','COMPLETE')
-      .limit(1);
+      .eq('card_type', state.cardType);
 
-    if (data && data.length > 0) {
-      const existing = data[0];
+    // 1) An INCOMPLETE card here — same as before: offer to jump to it.
+    const {data: inProgress} = await base.neq('status','COMPLETE').limit(1);
+    if (inProgress && inProgress.length > 0) {
+      const existing = inProgress[0];
+      const serial = existing.launcher_serial || existing.sight_serial;
       const proceed = confirm(
         `⚠ A card already exists at Trolley ${t} / Pos ${p}:\n\n` +
-        `  Serial: ${existing.launcher_serial || '(not yet entered)'}\n` +
+        `  Serial: ${serial || '(not yet entered)'}\n` +
         `  Started by: OP ${existing.operator_number}\n` +
         `  Status: ${existing.status}\n\n` +
         `Tap OK to open that existing card instead, or Cancel to keep ` +
         `filling in a new one (only do this if you're sure this is a ` +
         `genuinely different build).`
       );
-      if (proceed) {
-        loadBuild(existing.id);
+      if (proceed) { loadBuild(existing.id); }
+      return;
+    }
+
+    // 2) A COMPLETED card already here — the gap that let a GRN40 sample
+    // get signed off twice for the same trolley/position. It's finished,
+    // so there's nothing to jump to — just a hard warning before letting
+    // the operator create what would be a duplicate.
+    const {data: completed} = await base.eq('status','COMPLETE').limit(1);
+    if (completed && completed.length > 0) {
+      const existing = completed[0];
+      const serial = existing.launcher_serial || existing.sight_serial;
+      const proceed = confirm(
+        `🚫 Trolley ${t} / Pos ${p} already has a COMPLETED ${state.cardType} card:\n\n` +
+        `  Serial: ${serial || '(none recorded)'}\n` +
+        `  Signed off by: OP ${existing.operator_number}\n\n` +
+        `Starting a new card here will create a DUPLICATE build for this ` +
+        `position. Only continue if this trolley/position is genuinely ` +
+        `being reused for a new, different unit.`
+      );
+      if (!proceed) {
+        // Clear the position so they don't accidentally submit into it
+        const posEl = document.getElementById('inp-trolley-pos');
+        if (posEl) posEl.value = '';
       }
     }
   } catch(e) {
@@ -890,20 +1108,66 @@ async function loadCountries() {
 }
 
 // ─── CONTRACT DROPDOWN — self-service list, but LIVE-LINKED to serials ───────
-// Sourced from a "contracts" table the admin maintains directly in Supabase.
+// Sourced from "bluecard_contracts" (admin-maintained in Supabase).
 // IMPORTANT: the contract name selected here is the exact key checked against
-// weapon_serials.project for the serial hard-block. Adding a contract name
-// here makes it *selectable* — it only becomes *usable* once serials for
-// that exact contract name have also been loaded into weapon_serials.
+// weapon_serials.project for the serial hard-block.
+//
+// CARD-TYPE AWARE: one customer contract can hold more than one product under
+// the SAME name — e.g. "XRGL40 Colombia 2026" has XRGL40 launchers (guns) AND
+// GRN40 sights. weapon_serials.card_type is what separates them. So:
+//   - the dropdown only lists contracts that have serials for the card type
+//     this operator logged in with, labelled "— Launchers" / "— Sights";
+//   - the option VALUE stays the plain contract name (what gets saved);
+//   - serial checks only ever look at serials of this card type.
+// Serials loaded before card_type was filled in (card_type null) still count,
+// so older contracts keep working.
+const PRODUCT_LABEL = { RLL: 'Launchers', XRGL40: 'Launchers', GRN40: 'Sights' };
+
+function _contractLabel(name) {
+  const p = PRODUCT_LABEL[state.cardType];
+  return p ? `${name} — ${p}` : name;
+}
+
 async function loadContracts() {
   try {
     const {data} = await supabaseClient
       .from('bluecard_contracts')
       .select('name')
       .order('name');
+    const all = (data || []).map(c => c.name).filter(Boolean);
+
+    // Which contracts have serials for THIS card type? One small count query
+    // per contract (head:true = count only, no rows) — avoids Supabase's
+    // 1000-row page limit on a big serial register.
+    // Listed if it has serials of this card type — or, for an older contract
+    // whose serials were loaded with NO card_type at all, listed as before
+    // (a contract with typed serials of another product is NOT listed here).
+    const countWhere = async (name, typeFilter) => {
+      const {count} = await typeFilter(supabaseClient.from('weapon_serials')
+        .select('serial_number', {count: 'exact', head: true})
+        .eq('project', name));
+      return count || 0;
+    };
+    const checks = await Promise.all(all.map(async name => {
+      try {
+        if (await countWhere(name, q => q.eq('card_type', state.cardType)) > 0) return name;
+        const typed   = await countWhere(name, q => q.not('card_type', 'is', null));
+        const untyped = await countWhere(name, q => q.is('card_type', null));
+        return (typed === 0 && untyped > 0) ? name : null;
+      } catch (e) { return name; }   // can't tell — don't hide it
+    }));
+    let names = checks.filter(Boolean);
+    // Safety net: if nothing matched (e.g. serials not loaded yet for any
+    // contract), fall back to the full list, as before this change.
+    if (names.length === 0) names = all;
+    // A resumed card keeps its saved contract visible even if it no longer matches
+    if (state.formData.contract_name && !names.includes(state.formData.contract_name)) {
+      names = [state.formData.contract_name, ...names];
+    }
+
     const sel = document.getElementById('inp-contract'); if (!sel) return;
     sel.innerHTML = '<option value="">— Select Contract —</option>';
-    (data || []).forEach(c => sel.innerHTML += `<option value="${c.name}">${c.name}</option>`);
+    names.forEach(n => sel.innerHTML += `<option value="${n}">${_contractLabel(n)}</option>`);
     if (state.formData.contract_name) {
       sel.value = state.formData.contract_name;
       // Load serials for the restored contract
@@ -915,26 +1179,40 @@ async function loadContracts() {
 }
 
 // ─── SERIAL-PROJECT LINKING ────────────────────────────────────────────────────
-// When operator selects a contract, load all serial numbers for that project.
-// validateSerialExists() then checks only within this project's serials.
-// This ensures RLL serials can only be used on RLL contracts and vice versa.
+// When operator selects a contract, load the serial numbers for that project
+// AND this card type. validateSerialExists() then checks only within these,
+// so a launcher serial can never be accepted on a sight card or vice versa,
+// even though both products share one contract name.
 state._projectSerials = null; // null = no project selected yet (check all)
 
 async function loadSerialsForProject(project) {
   if (!project) { state._projectSerials = null; return; }
   try {
-    const {data} = await supabaseClient
-      .from('weapon_serials')
-      .select('serial_number,status,card_type')
-      .eq('project', project);
-    state._projectSerials = data || [];
-    const count = state._projectSerials.length;
+    // Paged — Supabase returns max 1000 rows per request, and a contract
+    // can have more serials than that.
+    const PAGE = 1000;
+    let rows = [], from = 0;
+    while (true) {
+      const {data, error} = await supabaseClient
+        .from('weapon_serials')
+        .select('serial_number,status,card_type')
+        .eq('project', project)
+        .or(`card_type.eq.${state.cardType},card_type.is.null`)
+        .order('serial_number')
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      rows = rows.concat(data || []);
+      if (!data || data.length < PAGE) break;
+      from += PAGE;
+    }
+    state._projectSerials = rows;
+    const count = rows.length;
     const statusEl = document.getElementById('ocr-status');
     if (statusEl) {
       statusEl.textContent =
-        `📋 ${project} — ${count} serial(s) available for this contract`;
+        `📋 ${_contractLabel(project)} — ${count} serial(s) available for this contract`;
     }
-    console.log(`[SerialProject] Loaded ${count} serials for "${project}"`);
+    console.log(`[SerialProject] Loaded ${count} ${state.cardType} serials for "${project}"`);
   } catch(e) {
     console.warn('[SerialProject] Failed to load serials:', e);
     state._projectSerials = null;
@@ -1046,7 +1324,8 @@ function setCheck(id,result) {
       if(error) showToast('Auto-save failed','warn');
     });
     // Keep weapon_serials in sync so serial register shows correct progress
-    if (state.formData && state.formData.launcher_serial) {
+    const regSerial = _unitIdentifierSerial();
+    if (regSerial) {
       const cfg=getCardConfig();
       const total=cfg.stages?cfg.stages.length:cfg.checks.length;
       const done=Object.values(state.checks).filter(v=>v&&v.result).length;
@@ -1054,7 +1333,7 @@ function setCheck(id,result) {
       // Only update to COMPLETE via handleSubmit — here just ensure IN PROGRESS
       supabaseClient.from('weapon_serials')
         .update({status:'IN PROGRESS', checks_done:done, checks_total:total, pct_complete:pct})
-        .eq('serial_number', state.formData.launcher_serial)
+        .eq('serial_number', regSerial)
         .then(()=>{});
     }
   }
@@ -1153,7 +1432,9 @@ async function saveChecks() {
     if (error) { showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
     await logActivity('CHECKS_SAVE',null,state.checks);
     showToast(`Saved — ${done}/${total} marked`,'ok');
-  } else if (state.formData && state.formData.launcher_serial) {
+  } else if (state.formData && _unitIdentifierSerial() &&
+             (state.cardType !== 'GRN40' || state.serialVerified)) {
+    // (GRN40 must be confirmed first — RLL/XRGL40 behaviour unchanged)
     // No buildId yet but we have identity data — create a draft build record
     const draft = {
       ...state.formData,
@@ -1188,7 +1469,11 @@ function refreshSignoff() {
   const cfg=getCardConfig();
   const total=cfg.stages?cfg.stages.length:cfg.checks.length;
   document.getElementById('so-cardtype').textContent=cfg.label;
-  document.getElementById('so-serial').textContent=state.formData.launcher_serial||'—';
+  const soSerial=document.getElementById('so-serial');
+  soSerial.textContent=_unitIdentifierSerial()||'—';
+  // Row label lives in index.html as "Launcher Serial" — relabel for GRN40
+  if (soSerial.previousElementSibling)
+    soSerial.previousElementSibling.textContent = state.cardType==='GRN40' ? 'Sight Serial' : 'Launcher Serial';
   document.getElementById('so-trolley').textContent=`${state.formData.trolley_number||'—'} / Pos ${state.formData.trolley_position||'—'}`;
   document.getElementById('so-client').textContent=`${state.formData.contract_name||'—'} — ${state.formData.client_country||'—'}`;
   const done=Object.values(state.checks).filter(v=>v&&v.result).length;
@@ -1219,14 +1504,15 @@ async function handleSubmit() {
   let error;
   if(state.buildId){({error}=await supabaseClient.from('weapon_builds').update(updates).eq('id',state.buildId));}
   else{({error}=await supabaseClient.from('weapon_builds').insert({...state.formData,...updates}));}
-  if(!error&&state.formData.launcher_serial){
-    await supabaseClient.from('weapon_serials').update({status:'COMPLETE'}).eq('serial_number',state.formData.launcher_serial);
+  const regSerial=_unitIdentifierSerial();
+  if(!error&&regSerial){
+    await supabaseClient.from('weapon_serials').update({status:'COMPLETE'}).eq('serial_number',regSerial);
   }
   await logActivity('QA_SIGNOFF',{qa_operator:qa,fat_name:fat},state.checks);
   btn.textContent='Submit & Save Build Card'; btn.disabled=false;
   if(error){console.error(error);showToast('Save failed','error');return;}
   showToast('Build card saved ✓','ok');
-  document.getElementById('done-serial').textContent=state.formData.launcher_serial||'—';
+  document.getElementById('done-serial').textContent=_unitIdentifierSerial()||'—';
   setTimeout(()=>show('screen-complete'),800);
 }
 
@@ -1276,7 +1562,7 @@ async function captureSerial(fieldId, photoKey, useOCR) {
     // taken after the launcher serial was confirmed had no reliable trigger
     // to ever reach the database, so it stayed on the tablet only.
     if (statusEl) statusEl.textContent = '💾 Uploading photo…';
-    if (state.serialVerified && state.formData.launcher_serial) {
+    if (state.serialVerified && _unitIdentifierSerial()) {
       await autoSaveIdentity();
     }
 
@@ -1309,6 +1595,7 @@ async function captureSerial(fieldId, photoKey, useOCR) {
       }
       if (statusEl) statusEl.textContent = '✓ Read — confirm or correct above';
       if (fieldId === 'inp-launcher-serial') resetSerialConfirm();
+      if (fieldId === 'inp-sight-serial' && state.cardType === 'GRN40') resetSightConfirm();
       showToast('Done — confirm serial ✓', 'ok');
     } catch(err) {
       if (inp) { inp.disabled = false; inp.placeholder = 'Type manually'; }
@@ -1356,8 +1643,9 @@ function _injectAutoSaveIndicator() {
 }
 
 async function autoSaveIdentity() {
-  // Don't auto-save if no serial confirmed yet — nothing worth saving
-  if (!state.serialVerified || !state.formData.launcher_serial) return;
+  // Don't auto-save if no serial confirmed yet — nothing worth saving.
+  // Identity serial is card-type aware: GRN40 = sight_serial, else launcher_serial.
+  if (!state.serialVerified || !_unitIdentifierSerial()) return;
   // Don't stack saves
   if (_autoSaving) { scheduleAutoSave(1500); return; }
   _autoSaving = true;
@@ -1394,13 +1682,14 @@ async function autoSaveIdentity() {
     if (error) throw error;
 
     // Update serial register status
-    if (state.formData.launcher_serial) {
+    const regSerial = _unitIdentifierSerial();
+    if (regSerial) {
       const serialUpdate = { status: 'IN PROGRESS' };
       if (state.formData.trolley_number)   serialUpdate.trolley_number   = state.formData.trolley_number;
       if (state.formData.trolley_position) serialUpdate.trolley_position = state.formData.trolley_position;
       await supabaseClient.from('weapon_serials')
         .update(serialUpdate)
-        .eq('serial_number', state.formData.launcher_serial);
+        .eq('serial_number', regSerial);
     }
 
     if (indEl) {
@@ -1487,10 +1776,13 @@ async function validateSerialExists(serial) {
   }
 
   // ── No project selected — check whole register (fallback) ────────────────
+  // Still card-type aware: a launcher serial must not validate on a sight
+  // card (or vice versa). Serials with no card_type recorded still count.
   const { data } = await supabaseClient
     .from('weapon_serials')
     .select('serial_number,status')
     .eq('serial_number', serial)
+    .or(`card_type.eq.${state.cardType},card_type.is.null`)
     .limit(1);
   if (!data || data.length === 0) return { exists: false, status: null };
   return { exists: true, status: data[0].status };
@@ -1613,6 +1905,26 @@ async function requestSupervisorOverride(serial) {
       operator: state.operator,
       card_type: cardType
     }, null);
+
+    // Step 7 (GRN40): override only covers the register check — the sight
+    // must still not already be on another GRN40 card.
+    if (cardType === 'GRN40') {
+      const dupe = await _findDuplicateSight(serial);
+      if (dupe) { _showSightDuplicate(serial, dupe); return; }
+      state.formData.sight_serial = serial;
+      state.serialVerified = true;
+      autoSaveIdentity();
+      const inp = document.getElementById('inp-sight-serial');
+      const sv  = document.getElementById('sight-verified');
+      if (inp) { inp.value = serial; inp.style.borderBottomColor = 'var(--pass)'; }
+      if (sv) {
+        sv.style.display = 'block';
+        sv.style.color   = 'var(--pass)';
+        sv.textContent   = `✓ SUPERVISOR OVERRIDE APPROVED — ${serial} added to register by OP ${state.operator}`;
+      }
+      showToast(`✓ Override approved — ${serial} added to register`, 'ok');
+      return;
+    }
 
     // Step 7: Now proceed as if serial was always in register
     showToast(`✓ Override approved — ${serial} added to register`, 'ok');
