@@ -251,46 +251,73 @@
   });
 
   // ── LOAD PROJECTS ───────────────────────────────────────────────────
+  // One card per contract AND product (card type). A single customer
+  // contract can hold both launchers and sights under the SAME name
+  // (e.g. "XRGL40 Colombia 2026" = 300 XRGL40 guns + 300 GRN40 sights),
+  // and guns and sights must never be added together.
+  const PRODUCT_LABEL = { RLL: 'Launchers', XRGL40: 'Launchers', GRN40: 'Sights' };
+
+  // Supabase returns at most 1000 rows per request — page through the
+  // whole register so large / multiple contracts are never cut off.
+  async function fetchAllPaged(buildQuery) {
+    const PAGE = 1000;
+    let rows = [], from = 0;
+    while (true) {
+      const { data, error } = await buildQuery().range(from, from + PAGE - 1);
+      if (error) return { data: null, error };
+      rows = rows.concat(data || []);
+      if (!data || data.length < PAGE) break;
+      from += PAGE;
+    }
+    return { data: rows, error: null };
+  }
+
   async function loadProjects() {
     const grid = document.getElementById('projects-grid');
 
-    // Get serial counts grouped by project from Supabase
-    const { data, error } = await supabaseClient
+    // Get serial counts grouped by project + card type from Supabase
+    const { data, error } = await fetchAllPaged(() => supabaseClient
       .from('weapon_serials')
-      .select('project, customer, card_type, status');
+      .select('project, customer, card_type, status')
+      .order('project').order('card_type').order('serial_number'));
 
     if (error) {
       grid.innerHTML = '<div class="loading-msg">Could not load projects — check connection</div>';
       return;
     }
 
-    // Group by project
+    // Group by project + card type
     const projects = {};
     data.forEach(row => {
-      if (!projects[row.project]) {
-        projects[row.project] = {
+      const key = `${row.project}||${row.card_type || ''}`;
+      if (!projects[key]) {
+        projects[key] = {
           name: row.project,
+          product: PRODUCT_LABEL[row.card_type] || '',
           customer: row.customer,
           card_type: row.card_type,
           total: 0, unbuilt: 0, inprogress: 0, complete: 0
         };
       }
-      projects[row.project].total++;
-      if (row.status === 'UNBUILT')      projects[row.project].unbuilt++;
-      else if (row.status === 'IN PROGRESS') projects[row.project].inprogress++;
-      else if (row.status === 'COMPLETE') projects[row.project].complete++;
+      projects[key].total++;
+      if (row.status === 'UNBUILT')      projects[key].unbuilt++;
+      else if (row.status === 'IN PROGRESS') projects[key].inprogress++;
+      else if (row.status === 'COMPLETE') projects[key].complete++;
     });
 
-    // Known future projects (empty placeholders)
+    // Placeholder cards only for a product that has no serials loaded at all
+    const liveTypes = new Set(Object.values(projects).map(p => p.card_type));
     const future = [
       { name: 'XRGL40 Project', customer: 'TBC', card_type: 'XRGL40', total: 0, unbuilt: 0, inprogress: 0, complete: 0 },
       { name: 'GRN40 Project',  customer: 'TBC', card_type: 'GRN40',  total: 0, unbuilt: 0, inprogress: 0, complete: 0 },
-    ];
+    ].filter(p => !liveTypes.has(p.card_type));
 
     grid.innerHTML = '';
 
-    // Render active projects first
-    Object.values(projects).forEach(p => renderProjectCard(p, false));
+    // Render active projects first (sorted by contract, then product)
+    Object.values(projects)
+      .sort((x, y) => (x.name || '').localeCompare(y.name || '') || (x.card_type || '').localeCompare(y.card_type || ''))
+      .forEach(p => renderProjectCard(p, false));
 
     // Render future placeholders
     future.forEach(p => renderProjectCard(p, true));
@@ -304,13 +331,13 @@
 
     const card = document.createElement('div');
     card.className = `project-card${isEmpty ? ' empty' : ''}`;
-    if (!isEmpty) card.onclick = () => openPanel(p.name);
+    if (!isEmpty) card.onclick = () => openPanel(p.name, p.card_type, p.product);
 
     card.innerHTML = `
       <div class="project-top">
         <span class="project-badge">${p.card_type}</span>
-        <span class="project-name">${p.name}</span>
-        ${isEmpty ? '<span class="coming-soon">No data yet</span>' : `<span class="project-total">${p.total} units</span>`}
+        <span class="project-name">${p.name}${p.product ? ` <span style="font-weight:600;color:var(--text-dim)">— ${p.product}</span>` : ''}</span>
+        ${isEmpty ? '<span class="coming-soon">No data yet</span>' : `<span class="project-total">${p.total} ${p.product ? p.product.toLowerCase() : 'units'}</span>`}
       </div>
       ${p.total > 0 ? `
         <div class="status-bar">
@@ -329,16 +356,20 @@
   }
 
   // ── SERIAL PANEL ────────────────────────────────────────────────────
-  async function openPanel(projectName) {
-    document.getElementById('panel-title').textContent = projectName;
+  async function openPanel(projectName, cardType, product) {
+    document.getElementById('panel-title').textContent = product ? `${projectName} — ${product}` : projectName;
     document.getElementById('serial-panel').classList.add('open');
     document.getElementById('serial-list').innerHTML = '<div class="loading-msg">Loading serials…</div>';
 
-    const { data, error } = await supabaseClient
-      .from('weapon_serials')
-      .select('serial_number, status, card_type')
-      .eq('project', projectName)
-      .order('serial_number');
+    // Only this contract's serials for this product (launchers OR sights)
+    const { data, error } = await fetchAllPaged(() => {
+      let q = supabaseClient
+        .from('weapon_serials')
+        .select('serial_number, status, card_type')
+        .eq('project', projectName);
+      q = cardType ? q.eq('card_type', cardType) : q.is('card_type', null);
+      return q.order('serial_number');
+    });
 
     if (error || !data) {
       document.getElementById('serial-list').innerHTML = '<div class="loading-msg">Could not load serials</div>';
