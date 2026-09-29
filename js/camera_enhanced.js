@@ -165,6 +165,12 @@ async function captureSerial(fieldId, photoKey, useOCR) {
         if (fieldId === 'inp-launcher-serial' && typeof resetSerialConfirm === 'function') {
           resetSerialConfirm();
         }
+        // GRN40: a newly read sight serial must be re-confirmed with ✓ —
+        // otherwise auto-save would store the unvalidated OCR value
+        // (resetSightConfirm() does nothing on RLL/XRGL40 cards)
+        if (fieldId === 'inp-sight-serial' && typeof resetSightConfirm === 'function') {
+          resetSightConfirm();
+        }
 
       } catch(err) {
         console.error('[Camera] OCR error:', err);
