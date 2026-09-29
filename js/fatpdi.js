@@ -6,15 +6,21 @@
 // A unit only appears here once its Blue Card build is COMPLETE, and the
 // serial/trolley/position are read from that build — never re-typed.
 
+const FATPDI_PAGE_SIZE = 50;
+
 const fatpdi = {
   stage: null,      // 'FAT' | 'PDI'
   cardType: null,   // 'RLL' | 'XRGL40' | 'GRN40'
-  units: [],        // eligible units for this stage+cardType
+  units: [],        // eligible units currently LOADED (paged, not the whole contract)
   results: {},      // results[unitSerial][itemId] = 'PASS'|'FAIL'|null
   remarks: {},      // remarks[unitSerial] = text
   docCode: null,
-  adminPreview: false   // true = Admin bypassed the COMPLETE gate to review layout;
+  adminPreview: false,  // true = Admin bypassed the COMPLETE gate to review layout;
                         // preview data is never saved to the real QC tables
+  offset: 0,            // paging — a contract can have 1000+ guns, so we never
+  totalCount: 0,         // load them all at once, only FATPDI_PAGE_SIZE per page
+  filterContract: '',
+  filterSearch: ''
 };
 
 function _fatpdiTable() {
@@ -30,19 +36,52 @@ function openFatPdi(stage) {
   fatpdi.stage = stage;
   fatpdi.cardType = cardType;
   fatpdi.adminPreview = false;
+  fatpdi.offset = 0;
+  fatpdi.totalCount = 0;
+  fatpdi.filterContract = '';
+  fatpdi.filterSearch = '';
   const typeCfg = FATPDI_TYPES[cardType];
   const stageCfg = typeCfg[stage];
   fatpdi.docCode = stageCfg.docCode;
   fatpdi.results = {};
   fatpdi.remarks = {};
+  fatpdi.units = [];
 
   document.getElementById('fatpdi-stage-badge').textContent = stage;
   document.getElementById('fatpdi-title').textContent = `${stage} — ${typeCfg.label}`;
   document.getElementById('fatpdi-op').textContent = state.operator || '—';
+  const searchInp = document.getElementById('fatpdi-filter-search');
+  if (searchInp) searchInp.value = '';
   _updateAdminPreviewUI();
+  _loadFatPdiContracts();
 
   show('screen-fatpdi');
-  _loadFatPdiUnits();
+  _loadFatPdiUnits(true);
+}
+
+// ── Contract filter dropdown — narrows a large contract down before ────────
+// listing units, same idea as the Home screen's Find by Trolley filters.
+async function _loadFatPdiContracts() {
+  const sel = document.getElementById('fatpdi-filter-contract');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">All Contracts</option>';
+  try {
+    const { data } = await supabaseClient.from('weapon_builds')
+      .select('contract_name').eq('card_type', fatpdi.cardType)
+      .not('contract_name', 'is', null);
+    const names = [...new Set((data || []).map(r => r.contract_name))].sort();
+    names.forEach(n => { sel.innerHTML += `<option value="${n}">${n}</option>`; });
+  } catch (e) {
+    console.warn('[FAT/PDI] Could not load contracts', e);
+  }
+}
+
+function _fatpdiApplyFilter() {
+  fatpdi.filterContract = document.getElementById('fatpdi-filter-contract').value;
+  fatpdi.filterSearch = document.getElementById('fatpdi-filter-search').value.trim().toUpperCase();
+  fatpdi.offset = 0;
+  fatpdi.units = [];
+  _loadFatPdiUnits(true);
 }
 
 // ── Admin Preview — bypass the "Blue Card must be COMPLETE" gate so an
@@ -91,53 +130,50 @@ function _updateAdminPreviewUI() {
   if (saveBtn) saveBtn.textContent = fatpdi.adminPreview ? '💾 Save (disabled in Preview)' : '💾 Save All';
 }
 
-// ── Load eligible units (Blue Card build must be COMPLETE) ─────────────────
-async function _loadFatPdiUnits() {
+// ── Load eligible units, one page at a time ─────────────────────────────────
+// A contract can hold 1000+ guns, so this never fetches "all" units — it
+// pages FATPDI_PAGE_SIZE at a time (Supabase .range()) and reports a real
+// count, with a Contract filter and serial search to narrow it down first.
+// reset=true (first open, or filter changed) replaces the grid; reset=false
+// ("Load More") appends the next page onto what's already showing.
+async function _loadFatPdiUnits(reset) {
   const grid = document.getElementById('fatpdi-grid');
   const emptyMsg = document.getElementById('fatpdi-empty-msg');
   const footer = document.getElementById('fatpdi-doc-footer');
-  grid.innerHTML = '';
+  const countLabel = document.getElementById('fatpdi-count-label');
+  const loadMoreBtn = document.getElementById('btn-fatpdi-loadmore');
   emptyMsg.style.display = 'none';
+  if (reset) { fatpdi.offset = 0; fatpdi.units = []; grid.innerHTML = ''; }
   footer.textContent = 'Loading…';
+  if (loadMoreBtn) { loadMoreBtn.disabled = true; loadMoreBtn.textContent = 'Loading…'; }
 
   try {
-    let units = [];
+    const serialCol = fatpdi.cardType === 'GRN40' ? 'sight_serial' : 'launcher_serial';
+    let q = supabaseClient.from('weapon_builds')
+      .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,status',
+              { count: 'exact' })
+      .eq('card_type', fatpdi.cardType)
+      .not(serialCol, 'is', null);
+    if (!fatpdi.adminPreview) q = q.eq('status', 'COMPLETE');
+    if (fatpdi.filterContract) q = q.eq('contract_name', fatpdi.filterContract);
+    if (fatpdi.filterSearch) q = q.ilike(serialCol, `%${fatpdi.filterSearch}%`);
+    q = q.order('trolley_number').order('trolley_position')
+         .range(fatpdi.offset, fatpdi.offset + FATPDI_PAGE_SIZE - 1);
 
-    if (fatpdi.cardType === 'GRN40') {
-      // GRN40's own Blue Card build IS the sight unit — eligibility is its
-      // own weapon_builds row, keyed by sight_serial.
-      let q = supabaseClient.from('weapon_builds')
-        .select('id,sight_serial,trolley_number,trolley_position,client_country,contract_name,status')
-        .eq('card_type', 'GRN40')
-        .not('sight_serial', 'is', null);
-      if (!fatpdi.adminPreview) q = q.eq('status', 'COMPLETE');
-      const { data } = await q.order('trolley_number').order('trolley_position');
-      units = (data || []).map(r => ({
-        unitSerial: r.sight_serial,
-        launcherSerial: null,
-        sightSerial: r.sight_serial,
-        trolleyNumber: r.trolley_number,
-        trolleyPosition: r.trolley_position,
-        status: r.status
-      }));
-    } else {
-      let q = supabaseClient.from('weapon_builds')
-        .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,status')
-        .eq('card_type', fatpdi.cardType)
-        .not('launcher_serial', 'is', null);
-      if (!fatpdi.adminPreview) q = q.eq('status', 'COMPLETE');
-      const { data } = await q.order('trolley_number').order('trolley_position');
-      units = (data || []).map(r => ({
-        unitSerial: r.launcher_serial,
-        launcherSerial: r.launcher_serial,
-        sightSerial: r.sight_serial || null,
-        status: r.status,
-        trolleyNumber: r.trolley_number,
-        trolleyPosition: r.trolley_position
-      }));
-    }
+    const { data, count } = await q;
+    fatpdi.totalCount = count || 0;
 
-    fatpdi.units = units;
+    const pageUnits = (data || []).map(r => ({
+      unitSerial: fatpdi.cardType === 'GRN40' ? r.sight_serial : r.launcher_serial,
+      launcherSerial: fatpdi.cardType === 'GRN40' ? null : r.launcher_serial,
+      sightSerial: r.sight_serial || null,
+      status: r.status,
+      trolleyNumber: r.trolley_number,
+      trolleyPosition: r.trolley_position
+    }));
+
+    fatpdi.units = fatpdi.units.concat(pageUnits);
+    fatpdi.offset += pageUnits.length;
 
     // Doc control footer — pulled live from Document Revision Control
     try {
@@ -153,32 +189,45 @@ async function _loadFatPdiUnits() {
       footer.textContent = fatpdi.docCode;
     }
 
-    if (units.length === 0) {
+    if (fatpdi.units.length === 0) {
       emptyMsg.style.display = 'block';
       emptyMsg.textContent = fatpdi.adminPreview
-        ? `No ${fatpdi.cardType} Blue Card builds exist yet at all — start one first, even in preview mode.`
-        : `No ${fatpdi.cardType} units with a completed Blue Card build are available yet.`;
+        ? `No ${fatpdi.cardType} Blue Card builds match this filter.`
+        : `No ${fatpdi.cardType} units with a completed Blue Card build match this filter yet.`;
+      if (countLabel) countLabel.textContent = '';
+      if (loadMoreBtn) loadMoreBtn.style.display = 'none';
       return;
     }
 
-    // Pull any existing results so re-opening the screen shows saved state
-    const unitSerials = units.map(u => u.unitSerial);
-    const { data: existing } = await supabaseClient.from(_fatpdiTable())
-      .select('unit_serial,item_id,result,remarks')
-      .eq('card_type', fatpdi.cardType).in('unit_serial', unitSerials);
-
-    (existing || []).forEach(row => {
-      if (!fatpdi.results[row.unit_serial]) fatpdi.results[row.unit_serial] = {};
-      fatpdi.results[row.unit_serial][row.item_id] = row.result;
-      if (row.remarks) fatpdi.remarks[row.unit_serial] = row.remarks;
-    });
+    // Pull any existing results for just this page's units, so re-opening
+    // or paging in more shows saved state without re-fetching everything.
+    const pageSerials = pageUnits.map(u => u.unitSerial);
+    if (pageSerials.length) {
+      const { data: existing } = await supabaseClient.from(_fatpdiTable())
+        .select('unit_serial,item_id,result,remarks')
+        .eq('card_type', fatpdi.cardType).in('unit_serial', pageSerials);
+      (existing || []).forEach(row => {
+        if (!fatpdi.results[row.unit_serial]) fatpdi.results[row.unit_serial] = {};
+        fatpdi.results[row.unit_serial][row.item_id] = row.result;
+        if (row.remarks) fatpdi.remarks[row.unit_serial] = row.remarks;
+      });
+    }
 
     _renderFatPdiGrid();
+
+    if (countLabel) countLabel.textContent = `Showing ${fatpdi.units.length} of ${fatpdi.totalCount}`;
+    if (loadMoreBtn) {
+      const more = fatpdi.units.length < fatpdi.totalCount;
+      loadMoreBtn.style.display = more ? 'block' : 'none';
+      loadMoreBtn.disabled = false;
+      loadMoreBtn.textContent = `Load ${Math.min(FATPDI_PAGE_SIZE, fatpdi.totalCount - fatpdi.units.length)} More`;
+    }
   } catch (e) {
     console.error('[FAT/PDI] load error', e);
     footer.textContent = '';
     emptyMsg.style.display = 'block';
     emptyMsg.textContent = 'Could not load units — check connection and try again.';
+    if (loadMoreBtn) { loadMoreBtn.disabled = false; loadMoreBtn.textContent = 'Retry'; }
   }
 }
 
