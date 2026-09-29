@@ -12,7 +12,9 @@ const fatpdi = {
   units: [],        // eligible units for this stage+cardType
   results: {},      // results[unitSerial][itemId] = 'PASS'|'FAIL'|null
   remarks: {},      // remarks[unitSerial] = text
-  docCode: null
+  docCode: null,
+  adminPreview: false   // true = Admin bypassed the COMPLETE gate to review layout;
+                        // preview data is never saved to the real QC tables
 };
 
 function _fatpdiTable() {
@@ -27,6 +29,7 @@ function openFatPdi(stage) {
 
   fatpdi.stage = stage;
   fatpdi.cardType = cardType;
+  fatpdi.adminPreview = false;
   const typeCfg = FATPDI_TYPES[cardType];
   const stageCfg = typeCfg[stage];
   fatpdi.docCode = stageCfg.docCode;
@@ -36,9 +39,56 @@ function openFatPdi(stage) {
   document.getElementById('fatpdi-stage-badge').textContent = stage;
   document.getElementById('fatpdi-title').textContent = `${stage} — ${typeCfg.label}`;
   document.getElementById('fatpdi-op').textContent = state.operator || '—';
+  _updateAdminPreviewUI();
 
   show('screen-fatpdi');
   _loadFatPdiUnits();
+}
+
+// ── Admin Preview — bypass the "Blue Card must be COMPLETE" gate so an
+//    admin can review the FAT/PDI layout/checklist without finishing a
+//    real build first. Uses the same PIN-gate pattern as Supervisor
+//    Override (PIN kept in app_settings, never hardcoded in the page).
+//    Preview data is NEVER written to weapon_fat_results/weapon_pdi_results.
+async function requestAdminPreview() {
+  if (fatpdi.adminPreview) {
+    // Toggle off
+    fatpdi.adminPreview = false;
+    _updateAdminPreviewUI();
+    _loadFatPdiUnits();
+    return;
+  }
+
+  let adminPin = 'ADMIN123'; // fallback — matches Rippel Matrix's default admin PIN
+  try {
+    const { data } = await supabaseClient.from('app_settings')
+      .select('value').eq('key', 'pwa_admin_pin').limit(1);
+    if (data && data.length > 0) adminPin = data[0].value;
+  } catch (e) {
+    console.warn('[FAT/PDI] Could not fetch admin PIN, using fallback');
+  }
+
+  const entered = prompt('ADMIN PREVIEW\n\nEnter Admin PIN to review FAT/PDI setup on units that are not yet COMPLETE:\n(Nothing entered here is saved as a real QC record.)');
+  if (!entered) return;
+
+  if (entered.trim() !== adminPin) {
+    showToast('❌ Wrong Admin PIN', 'error');
+    return;
+  }
+
+  fatpdi.adminPreview = true;
+  showToast('🔓 Admin Preview ON — showing all units, nothing will be saved', 'warn');
+  _updateAdminPreviewUI();
+  _loadFatPdiUnits();
+}
+
+function _updateAdminPreviewUI() {
+  const banner = document.getElementById('fatpdi-preview-banner');
+  const btn = document.getElementById('btn-fatpdi-admin-preview');
+  const saveBtn = document.getElementById('btn-fatpdi-save');
+  if (banner) banner.style.display = fatpdi.adminPreview ? 'block' : 'none';
+  if (btn) btn.textContent = fatpdi.adminPreview ? '🔓 Admin Preview: ON (tap to exit)' : '🔒 Admin Preview';
+  if (saveBtn) saveBtn.textContent = fatpdi.adminPreview ? '💾 Save (disabled in Preview)' : '💾 Save All';
 }
 
 // ── Load eligible units (Blue Card build must be COMPLETE) ─────────────────
@@ -56,28 +106,32 @@ async function _loadFatPdiUnits() {
     if (fatpdi.cardType === 'GRN40') {
       // GRN40's own Blue Card build IS the sight unit — eligibility is its
       // own weapon_builds row, keyed by sight_serial.
-      const { data } = await supabaseClient.from('weapon_builds')
-        .select('id,sight_serial,trolley_number,trolley_position,client_country,contract_name')
-        .eq('card_type', 'GRN40').eq('status', 'COMPLETE')
-        .not('sight_serial', 'is', null)
-        .order('trolley_number').order('trolley_position');
+      let q = supabaseClient.from('weapon_builds')
+        .select('id,sight_serial,trolley_number,trolley_position,client_country,contract_name,status')
+        .eq('card_type', 'GRN40')
+        .not('sight_serial', 'is', null);
+      if (!fatpdi.adminPreview) q = q.eq('status', 'COMPLETE');
+      const { data } = await q.order('trolley_number').order('trolley_position');
       units = (data || []).map(r => ({
         unitSerial: r.sight_serial,
         launcherSerial: null,
         sightSerial: r.sight_serial,
         trolleyNumber: r.trolley_number,
-        trolleyPosition: r.trolley_position
+        trolleyPosition: r.trolley_position,
+        status: r.status
       }));
     } else {
-      const { data } = await supabaseClient.from('weapon_builds')
-        .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name')
-        .eq('card_type', fatpdi.cardType).eq('status', 'COMPLETE')
-        .not('launcher_serial', 'is', null)
-        .order('trolley_number').order('trolley_position');
+      let q = supabaseClient.from('weapon_builds')
+        .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,status')
+        .eq('card_type', fatpdi.cardType)
+        .not('launcher_serial', 'is', null);
+      if (!fatpdi.adminPreview) q = q.eq('status', 'COMPLETE');
+      const { data } = await q.order('trolley_number').order('trolley_position');
       units = (data || []).map(r => ({
         unitSerial: r.launcher_serial,
         launcherSerial: r.launcher_serial,
         sightSerial: r.sight_serial || null,
+        status: r.status,
         trolleyNumber: r.trolley_number,
         trolleyPosition: r.trolley_position
       }));
@@ -101,7 +155,9 @@ async function _loadFatPdiUnits() {
 
     if (units.length === 0) {
       emptyMsg.style.display = 'block';
-      emptyMsg.textContent = `No ${fatpdi.cardType} units with a completed Blue Card build are available yet.`;
+      emptyMsg.textContent = fatpdi.adminPreview
+        ? `No ${fatpdi.cardType} Blue Card builds exist yet at all — start one first, even in preview mode.`
+        : `No ${fatpdi.cardType} units with a completed Blue Card build are available yet.`;
       return;
     }
 
@@ -141,7 +197,9 @@ function _renderFatPdiGrid() {
     const us = u.unitSerial;
     if (!fatpdi.results[us]) fatpdi.results[us] = {};
     html += `<tr>`;
-    html += `<td style="position:sticky;left:0;background:var(--bg,#0a1628);font-family:var(--font-mono,monospace);font-weight:700;">${us}${u.sightSerial && u.launcherSerial ? `<br><span style="font-size:10px;color:var(--text-dim,#8fa3c0);">Sight ${u.sightSerial}</span>` : ''}</td>`;
+    const statusTag = fatpdi.adminPreview && u.status !== 'COMPLETE'
+      ? `<br><span style="font-size:9px;color:#e08f1a;">${u.status||'IN PROGRESS'} (preview)</span>` : '';
+    html += `<td style="position:sticky;left:0;background:var(--bg,#0a1628);font-family:var(--font-mono,monospace);font-weight:700;">${us}${u.sightSerial && u.launcherSerial ? `<br><span style="font-size:10px;color:var(--text-dim,#8fa3c0);">Sight ${u.sightSerial}</span>` : ''}${statusTag}</td>`;
     html += `<td style="font-size:12px;">${u.trolleyNumber||'—'} / ${u.trolleyPosition||'—'}</td>`;
     items.forEach(it => {
       const cur = fatpdi.results[us][it.id] || null;
@@ -175,6 +233,10 @@ function _setFatPdiRemarks(inp) {
 
 // ── Save all entered results for this stage+cardType ───────────────────────
 async function saveFatPdi() {
+  if (fatpdi.adminPreview) {
+    showToast('🔓 Admin Preview mode — nothing is saved. Exit preview to record real results.', 'warn');
+    return;
+  }
   const rows = [];
   fatpdi.units.forEach(u => {
     const us = u.unitSerial;
