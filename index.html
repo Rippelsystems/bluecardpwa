@@ -135,12 +135,28 @@
       🔓 ADMIN PREVIEW — showing units regardless of Blue Card build status. Nothing entered here is saved as a real QC record.
     </div>
     <div class="section-head"><span class="section-num">1</span><h2>Units Ready for Inspection</h2></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+      <div class="field-group" style="margin:0;">
+        <label>Contract</label>
+        <select id="fatpdi-filter-contract" style="font-size:13px;" onchange="_fatpdiApplyFilter()"></select>
+      </div>
+      <div class="field-group" style="margin:0;">
+        <label>Search Serial</label>
+        <input type="text" id="fatpdi-filter-search" placeholder="e.g. RLL 26004" autocapitalize="characters"
+               spellcheck="false" style="font-size:13px;" onchange="_fatpdiApplyFilter()">
+      </div>
+    </div>
+
     <div id="fatpdi-empty-msg" style="display:none;color:var(--text-dim,#8fa3c0);font-size:13px;padding:16px 0;"></div>
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border,#1e3354);border-radius:8px;">
       <table id="fatpdi-grid" class="fatpdi-table" style="border-collapse:collapse;width:100%;font-size:12px;"></table>
     </div>
+    <div id="fatpdi-count-label" style="font-size:11px;color:var(--text-dim,#8fa3c0);margin:8px 0;"></div>
+    <button class="btn btn-secondary" id="btn-fatpdi-loadmore" style="display:none;" onclick="_loadFatPdiUnits(false)">Load 50 More</button>
+
     <div class="divider"></div>
-    <button class="btn btn-primary" id="btn-fatpdi-save" onclick="saveFatPdi()">💾 Save All</button>
+    <button class="btn btn-primary" id="btn-fatpdi-save" onclick="saveFatPdi()">💾 Save All (loaded units only)</button>
     <button class="btn btn-secondary" style="margin-top:8px;" onclick="goToResume()">← Back to Home</button>
   </div>
 </section>
