@@ -23,7 +23,7 @@ function show(screenId) {
   document.querySelectorAll('.nav-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.screen === screenId));
   const nav = document.getElementById('bottom-nav');
-  const hideNav = ['screen-login','screen-complete'].includes(screenId);
+  const hideNav = ['screen-login','screen-complete','screen-fatpdi'].includes(screenId);
   if (nav) nav.classList.toggle('hidden', hideNav);
   const swBtn = document.getElementById('switch-op-btn');
   if (swBtn) swBtn.style.display = hideNav ? 'none' : 'block';
@@ -1355,6 +1355,16 @@ async function autoSaveIdentity() {
     }
     await logActivity('IDENTITY_AUTOSAVE', state.formData, null);
 
+    // Keep the XRGL40 <-> GRN40 sight pairing in sync while the build is
+    // still in progress. Once a Blue Card is COMPLETE, changing the sight
+    // must go through the PMS "Replace Sight" admin function instead
+    // (see weapon_sight_pairings / admin_replace_sight), so this only
+    // auto-syncs pre-completion normal capture/correction.
+    if (state.cardType === 'XRGL40' && state.formData.launcher_serial &&
+        state.formData.sight_serial && state.formData.status !== 'COMPLETE') {
+      _syncSightPairing(state.formData.launcher_serial, state.formData.sight_serial);
+    }
+
   } catch(e) {
     console.error('[AutoSave]', e);
     if (indEl) {
@@ -1363,6 +1373,34 @@ async function autoSaveIdentity() {
     }
   } finally {
     _autoSaving = false;
+  }
+}
+
+// Keep weapon_sight_pairings.is_current in step with the XRGL40 identity
+// screen's Sight Serial field. Never called after a build is COMPLETE —
+// that path is the admin-only Replace Sight function instead.
+async function _syncSightPairing(launcherSerial, sightSerial) {
+  try {
+    const { data: existing } = await supabaseClient.from('weapon_sight_pairings')
+      .select('id,sight_serial').eq('launcher_serial', launcherSerial)
+      .eq('is_current', true).limit(1);
+
+    if (existing && existing.length > 0) {
+      if (existing[0].sight_serial === sightSerial) return; // unchanged
+      await supabaseClient.from('weapon_sight_pairings')
+        .update({ is_current: false, replaced_at: new Date().toISOString(),
+                   replaced_by: state.operator, replace_reason: 'Corrected during build' })
+        .eq('id', existing[0].id);
+    }
+
+    await supabaseClient.from('weapon_sight_pairings').insert({
+      launcher_serial: launcherSerial,
+      sight_serial: sightSerial,
+      is_current: true,
+      paired_by: state.operator
+    });
+  } catch (e) {
+    console.error('[SightPairing] sync error', e);
   }
 }
 
