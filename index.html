@@ -56,7 +56,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:6px;font-size:10px;color:#2a4060;letter-spacing:0.06em;text-align:center;font-family:monospace;">
-    v1.11 · 12 Sep 2026
+    v1.12 · 29 Sep 2026
   </div>
 
 </section>
@@ -124,7 +124,16 @@
     <span class="operator-tag">OP <span id="fatpdi-op">—</span></span>
   </div>
   <div class="content">
-    <div id="fatpdi-doc-footer" style="font-size:11px;color:var(--text-dim,#8fa3c0);margin-bottom:10px;font-family:monospace;"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div id="fatpdi-doc-footer" style="font-size:11px;color:var(--text-dim,#8fa3c0);font-family:monospace;"></div>
+      <button id="btn-fatpdi-admin-preview" onclick="requestAdminPreview()"
+              style="background:transparent;border:1px solid var(--border,#1e3354);color:#8fa3c0;
+                     font-size:11px;font-weight:700;padding:5px 10px;border-radius:6px;cursor:pointer;">🔒 Admin Preview</button>
+    </div>
+    <div id="fatpdi-preview-banner" style="display:none;background:#3a2a00;border:1px solid #e08f1a;color:#e08f1a;
+         font-size:12px;font-weight:700;padding:8px 10px;border-radius:6px;margin-bottom:10px;">
+      🔓 ADMIN PREVIEW — showing units regardless of Blue Card build status. Nothing entered here is saved as a real QC record.
+    </div>
     <div class="section-head"><span class="section-num">1</span><h2>Units Ready for Inspection</h2></div>
     <div id="fatpdi-empty-msg" style="display:none;color:var(--text-dim,#8fa3c0);font-size:13px;padding:16px 0;"></div>
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border,#1e3354);border-radius:8px;">
