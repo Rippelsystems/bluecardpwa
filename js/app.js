@@ -284,6 +284,42 @@ function goToResume() {
   show('screen-resume'); loadResumeScreen();
 }
 
+// Lets an operator back out of a card they don't want to continue —
+// whether or not anything was saved yet. If it was only ever local state
+// (no serial confirmed, nothing autosaved), this is a plain reset. If it
+// was already autosaved to weapon_builds (a serial was confirmed), this
+// also deletes that row and frees the serial back to UNBUILT, logging the
+// cancellation first so it's traceable in the audit trail.
+async function cancelBuildCard() {
+  if (!confirm('Cancel this build card?\n\nAny saved data for this card will be permanently deleted. This cannot be undone.')) {
+    return;
+  }
+
+  if (!state.buildId) {
+    // Nothing was ever saved to Supabase — pure local reset.
+    showToast('Card discarded', 'ok');
+    goToResume();
+    return;
+  }
+
+  try {
+    if (state.formData.launcher_serial) {
+      await logActivity('BUILD_CANCELLED', { cancelled_by: state.operator }, null);
+    }
+    await supabaseClient.from('weapon_builds').delete().eq('id', state.buildId);
+    if (state.formData.launcher_serial) {
+      await supabaseClient.from('weapon_serials')
+        .update({ status: 'UNBUILT' })
+        .eq('serial_number', state.formData.launcher_serial);
+    }
+    showToast('✅ Card cancelled and deleted', 'ok');
+  } catch (e) {
+    console.error('[CancelBuild]', e);
+    showToast('⚠ Could not fully clean up — tell your admin to check this serial', 'warn');
+  }
+  goToResume();
+}
+
 function endSession() {
   state.operator=null; state.buildId=null; state.formData={}; state.checks={};
   show('screen-login');
@@ -661,6 +697,23 @@ async function saveIdentity() {
     const lw = document.getElementById('launcher-confirm-wrap');
     if (lw) lw.style.display = 'block';
     return;
+  }
+
+  // Block creating a BRAND NEW record with no identifying serial at all —
+  // this is what produced "ghost" IN PROGRESS cards with no serial that
+  // just sit in the incomplete list forever. Updating an EXISTING card
+  // (state.buildId already set) is unaffected — this only blocks a fresh
+  // insert with nothing to identify it.
+  if (!state.buildId) {
+    const idField = state.cardType === 'GRN40' ? 'inp-sight-serial' : 'inp-launcher-serial';
+    const idLabel = state.cardType === 'GRN40' ? 'Sight Serial' : 'Launcher Serial';
+    const hasSerial = state.cardType === 'GRN40'
+      ? !!document.getElementById('inp-sight-serial')?.value.trim()
+      : (state.serialVerified && !!launcherInput);
+    if (!hasSerial) {
+      showToast(`❌ Enter and confirm the ${idLabel} before saving a new card`, 'error');
+      return;
+    }
   }
 
   // Warn if launcher photo not taken — it is required for customs/export docs
