@@ -54,10 +54,10 @@ function showSection(id) {
       if ((chk.type === 'measurement') && saved.result && !saved.value) {
         missing.push(chk.label + ' (value required)');
       }
-      // GRN40 stages must have a tech_no
-      if (chk.tech_no !== undefined || (cfg.stages && cfg.stages.find(s=>s.id===chk.id))) {
-        if (!saved.tech_no) missing.push(chk.label + ' (tech no required)');
-      }
+      // Note: GRN40 stages used to require a separately-typed tech_no here.
+      // That field is gone — the operator (assy_no) now auto-stamps on every
+      // Pass/Fail/N-A tap, same as RLL/XRGL40 checks, so "must have a result"
+      // above already covers it.
     });
     // Block if no contract selected — contract is the serial-linking key
     if (!state.formData.contract_name) {
@@ -1004,14 +1004,17 @@ function buildGRN40Stages(container, stages) {
     card.id=`chk-row-${s.id}`;
     card.style.cssText='background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px;';
     card.innerHTML=`
-      <div style="font-size:10px;font-weight:800;color:var(--text);line-height:1.3;margin-bottom:2px;">${s.label}</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;">
+        <div style="font-size:10px;font-weight:800;color:var(--text);line-height:1.3;margin-bottom:2px;">${s.label}</div>
+        <div class="assy-stamp" id="assy-${s.id}" onclick="editAssyNo('${s.id}')"
+             style="font-size:9px;font-family:var(--font-mono);color:var(--text-dim);
+                    background:var(--bg);border:1px solid var(--border);border-radius:4px;
+                    padding:2px 5px;cursor:pointer;flex-shrink:0;white-space:nowrap;">
+          OP ${saved.assy_no||state.operator||'—'}
+        </div>
+      </div>
       ${s.process?`<div style="font-size:9px;color:var(--text-dim);margin-bottom:4px;">${s.process}</div>`:''}
       <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;font-family:var(--font-mono);">${s.partNo}</div>
-      <div style="font-size:9px;color:var(--label);margin-bottom:2px;font-weight:700;">TECH NO</div>
-      <input type="text" placeholder="Op No" value="${saved.tech_no||''}"
-             onchange="setStageValue('${s.id}',this.value)"
-             style="width:100%;border:none;border-bottom:1px solid var(--border);background:transparent;
-                    font-size:11px;padding:2px;outline:none;color:var(--text);font-family:var(--font-mono);">
       <div class="check-btns" style="margin-top:6px;gap:4px;">
         <button class="chk-btn pass" onclick="setCheck('${s.id}','PASS')" style="font-size:9px;padding:5px 2px;">✓</button>
         <button class="chk-btn fail" onclick="setCheck('${s.id}','FAIL')" style="font-size:9px;padding:5px 2px;">✗</button>
@@ -1071,7 +1074,6 @@ function setCheck(id,result) {
 }
 
 function setCheckValue(id,value) { if(!state.checks[id]) state.checks[id]={}; state.checks[id].value=value; }
-function setStageValue(id,value) { if(!state.checks[id]) state.checks[id]={}; state.checks[id].tech_no=value; }
 
 function editAssyNo(id) {
   const current=state.checks[id]?.assy_no||state.operator;
