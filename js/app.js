@@ -959,6 +959,24 @@ function _rowIdentifierSerial(row) {
   return (row.card_type === 'GRN40') ? (row.sight_serial || null) : (row.launcher_serial || null);
 }
 
+// 20/10/2026 (v1.18): the log must never carry the photos. IDENTITY_SAVE /
+// IDENTITY_AUTOSAVE used to write the whole formData — including every
+// base64 serial photo (100–300 KB each) — into fields_updated on EVERY
+// auto-save. Rows of 1–2 MB each made Operator Activity / Audit Trail in
+// Rippel Matrix time out on the first day of real use. The photos live on
+// weapon_builds; the log only needs to say a photo was taken.
+function _logSafeFields(fields) {
+  if (!fields || typeof fields !== 'object') return fields;
+  const out = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (k === 'checks') continue;                       // checks have their own column
+    if (k.startsWith('photo_')) { if (v) out[k] = '[photo]'; continue; }
+    if (typeof v === 'string' && v.startsWith('data:')) { out[k] = '[photo]'; continue; }
+    out[k] = v;
+  }
+  return out;
+}
+
 async function logActivity(action,fields,checks) {
   const unitSerial = _unitIdentifierSerial();
   if(!unitSerial) return;
@@ -966,7 +984,7 @@ async function logActivity(action,fields,checks) {
     await supabaseClient.from('weapon_build_sessions').insert({
       launcher_serial:unitSerial,
       operator_number:state.operator,action,
-      fields_updated:fields?JSON.stringify(fields):null,
+      fields_updated:fields?JSON.stringify(_logSafeFields(fields)):null,
       checks_updated:checks?JSON.stringify(checks):null,
     });
   } catch(e){console.warn('Log failed',e);}
