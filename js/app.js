@@ -911,9 +911,7 @@ async function saveIdentity() {
       .update({...state.formData, updated_at: new Date().toISOString()})
       .eq('id', state.buildId).select());
   } else {
-    ({data: result, error} = await supabaseClient.from('weapon_builds')
-      .insert({...state.formData}).select());
-    if (!error && result && result.length > 0) state.buildId = result[0].id;
+    ({data: result, error} = await _createBuildRow({...state.formData}));
   }
 
   if (error) { console.error(error); showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
@@ -933,6 +931,113 @@ async function saveIdentity() {
   await logActivity('IDENTITY_SAVE', state.formData, null);
   showToast('Identity saved ✓', 'ok');
   loadActivityLog(_unitIdentifierSerial());
+}
+
+// ─── ONE CARD PER SERIAL — the only way a weapon_builds row is ever created ──
+// 20/10/2026 (v1.19). Four places used to insert a build row on their own
+// (identity auto-save, Save Identity Fields, Save Progress, Submit). After
+// tapping ✓ the auto-save insert runs in the background; tapping Save
+// Identity Fields in that 1–2 s window inserted the SAME card again — a
+// second row with the serial and no checks (the "0/18 duplicate").
+//
+// Now every create goes through here, which guarantees one row per serial:
+//   1. one create at a time — a second caller waits for the first;
+//   2. if a card for this serial already exists (created a moment ago, or
+//      on another tablet) it is ADOPTED and updated, never duplicated;
+//   3. if the database's unique index still rejects the insert (two tablets
+//      at the exact same instant), the existing card is adopted instead;
+//   4. the new row is bound to this screen only if the operator is still on
+//      the same serial — not if they already moved to another card.
+let _createInFlight = null;
+
+function _serialColumn() {
+  return state.cardType === 'GRN40' ? 'sight_serial' : 'launcher_serial';
+}
+
+async function _findExistingBuild(serial) {
+  let q = supabaseClient.from('weapon_builds')
+    .select('id,status,checks,card_type')
+    .eq(_serialColumn(), serial);
+  if (state.cardType === 'GRN40') q = q.eq('card_type', 'GRN40');
+  const { data } = await q.order('created_at', { ascending: true }).limit(1);
+  return (data && data.length) ? data[0] : null;
+}
+
+async function _createBuildRow(payload) {
+  if (state.buildId) return { data: [{ id: state.buildId }], error: null };
+  if (_createInFlight) {
+    try { await _createInFlight; } catch (e) { /* reported by the first caller */ }
+    // The first caller created (or adopted) the row — apply THIS caller's
+    // data to it instead of creating a second one.
+    if (state.buildId) return _applyToExisting(payload);
+  }
+  const serial = _unitIdentifierSerial();
+  if (!serial) {
+    // Never create a card with no identifying serial (a "ghost" card)
+    return { data: null, error: { message: 'No serial on this card yet — confirm the serial first' } };
+  }
+  const run = (async () => {
+    // 1. Adopt an existing card for this serial rather than create a second
+    if (serial) {
+      const existing = await _findExistingBuild(serial);
+      if (existing) return _adoptBuild(existing, payload, serial);
+    }
+    // 2. Create it
+    const { data, error } = await supabaseClient.from('weapon_builds')
+      .insert(payload).select();
+    if (error && (error.code === '23505' || /duplicate key|unique/i.test(error.message || ''))) {
+      // The database refused a second row — someone else created it first
+      const existing = serial ? await _findExistingBuild(serial) : null;
+      if (existing) return _adoptBuild(existing, payload, serial);
+    }
+    if (!error && data && data.length) {
+      if (_unitIdentifierSerial() === serial) {
+        state.buildId = data[0].id;
+        // Ticks made while the row was still being created have nowhere to
+        // go until now — write them to the new row.
+        if (!('checks' in payload) && Object.keys(state.checks || {}).length) {
+          await supabaseClient.from('weapon_builds')
+            .update({ checks: state.checks }).eq('id', state.buildId);
+        }
+      }
+    }
+    return { data, error };
+  })();
+  _createInFlight = run;
+  try { return await run; } finally { if (_createInFlight === run) _createInFlight = null; }
+}
+
+async function _applyToExisting(payload) {
+  const upd = { ...payload, updated_at: new Date().toISOString() };
+  delete upd.id; delete upd.created_at;
+  if (!('checks' in upd)) delete upd.checks;
+  const { data, error } = await supabaseClient.from('weapon_builds')
+    .update(upd).eq('id', state.buildId).select();
+  return { data: data && data.length ? data : [{ id: state.buildId }], error };
+}
+
+async function _adoptBuild(existing, payload, serial) {
+  if (_unitIdentifierSerial() !== serial) return { data: [existing], error: null };
+  state.buildId = existing.id;
+  const upd = { ...payload, updated_at: new Date().toISOString() };
+  delete upd.id; delete upd.created_at;
+  if (!('checks' in upd)) {
+    // Identity save: keep the checks already on the card, and show them
+    delete upd.checks;
+    if (existing.checks && Object.keys(state.checks || {}).length === 0) {
+      state.checks = existing.checks;
+      updateNavBadges();
+    }
+  }
+  if (!upd.status || upd.status === 'IN PROGRESS') {
+    upd.status = existing.status === 'COMPLETE' ? 'COMPLETE' : 'IN PROGRESS';
+    state.formData.status = upd.status;
+  }
+  const { data, error } = await supabaseClient.from('weapon_builds')
+    .update(upd).eq('id', existing.id).select();
+  showToast(`ℹ ${serial} already has a card — continuing that one`, 'warn');
+  logActivity('EXISTING_CARD_ADOPTED', { serial, build_id: existing.id }, null);
+  return { data: data && data.length ? data : [existing], error };
 }
 
 // ─── ACTIVITY LOG ─────────────────────────────────────────────────────────────
@@ -1485,12 +1590,10 @@ async function saveChecks() {
       status: 'IN PROGRESS',
       session_start: new Date().toISOString(),
     };
-    const {data, error} = await supabaseClient.from('weapon_builds').insert(draft).select().limit(1);
+    delete draft.id; delete draft.created_at;
+    const {error} = await _createBuildRow(draft);
     if (error) { showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
-    if (data && data.length > 0) {
-      state.buildId = data[0].id;
-      showToast(`Draft saved — ${done}/${total} marked`, 'ok');
-    }
+    if (state.buildId) showToast(`Draft saved — ${done}/${total} marked`, 'ok');
   } else {
     // No identity at all — warn operator
     showToast('⚠ Save identity (Step 1) before saving checks', 'warn');
@@ -1544,7 +1647,7 @@ async function handleSubmit() {
   };
   let error;
   if(state.buildId){({error}=await supabaseClient.from('weapon_builds').update(updates).eq('id',state.buildId));}
-  else{({error}=await supabaseClient.from('weapon_builds').insert({...state.formData,...updates}));}
+  else{({error}=await _createBuildRow({...state.formData,...updates}));}
   const regSerial=_unitIdentifierSerial();
   if(!error&&regSerial){
     await supabaseClient.from('weapon_serials').update({status:'COMPLETE'}).eq('serial_number',regSerial);
@@ -1713,12 +1816,7 @@ async function autoSaveIdentity() {
         .update({...state.formData, updated_at: new Date().toISOString()})
         .eq('id', state.buildId).select());
     } else {
-      ({data: result, error} = await supabaseClient
-        .from('weapon_builds')
-        .insert({...state.formData}).select());
-      if (!error && result && result.length > 0) {
-        state.buildId = result[0].id;
-      }
+      ({data: result, error} = await _createBuildRow({...state.formData}));
     }
 
     if (error) throw error;
