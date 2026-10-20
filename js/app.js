@@ -261,7 +261,11 @@ async function loadBuild(id) {
   const {data}=await supabaseClient.from('weapon_builds').select('*').eq('id',id).limit(1);
   if (!data||data.length===0){showToast('Could not load','error');return;}
   const row=data[0];
-  state.buildId=row.id; state.formData={...row};
+  state.buildId=row.id;
+  // formData must NEVER carry a copy of checks: identity auto-save spreads
+  // formData into the update, so a stale checks snapshot taken here would
+  // overwrite every tick made since (the "ticks wiped" bug).
+  state.formData={...row}; delete state.formData.checks;
   state.cardType=row.card_type||'RLL';
   // A saved row's identifying serial was already validated when it was
   // first confirmed — GRN40 = sight_serial, RLL/XRGL40 = launcher_serial.
@@ -898,6 +902,9 @@ async function saveIdentity() {
   state.formData.status = state.formData.status || 'IN PROGRESS';
   state.formData.card_type = state.cardType;
 
+  // Identity saves carry identity fields only — checks are saved by the
+  // Checks screen itself (setCheck / saveChecks), never from here.
+  delete state.formData.checks;
   let result, error;
   if (state.buildId) {
     ({data: result, error} = await supabaseClient.from('weapon_builds')
@@ -1225,10 +1232,10 @@ function refreshChecks() {
   const container=document.getElementById('checks-list');
   const total = cfg.stages ? cfg.stages.length : cfg.checks.length;
 
-  if(container.children.length===total){
-    if(cfg.checks) cfg.checks.forEach(c=>applyCheckVisual(c.id));
-    updateChecksProgress(); return;
-  }
+  // Always rebuild from state.checks. The old shortcut re-used the rows
+  // already on screen and only re-applied ticks that the new card HAD —
+  // ticks the previous card had and this one does not were left showing,
+  // so one gun's ticks appeared to carry over to the next.
   container.innerHTML='';
 
   if(state.cardType==='GRN40') {
@@ -1308,16 +1315,26 @@ function setCheck(id,result) {
   if(!state.checks[id]) state.checks[id]={};
   const prevResult = state.checks[id].result;
   const prevOp = state.checks[id].assy_no;
-  state.checks[id].result=result;
-  // Always stamp the CURRENT operator — whoever last changed a result gets
-  // credited for it. Previously this used "existing || current", which meant
-  // whoever touched a check FIRST stayed credited forever, even if a
-  // different operator logged in later and corrected that same check.
-  state.checks[id].assy_no=state.operator;
-  state.checks[id].timestamp=new Date().toISOString();
+  // Tapping the button that is already selected UNTICKS the check — the
+  // result is cleared, the count drops, and the card can be signed off only
+  // once it has been marked again. (Measurement values are kept.)
+  const clearing = (prevResult === result);
+  if (clearing) {
+    delete state.checks[id].result;
+    delete state.checks[id].assy_no;
+    delete state.checks[id].timestamp;
+    if (Object.keys(state.checks[id]).length === 0) delete state.checks[id];
+  } else {
+    state.checks[id].result=result;
+    // Always stamp the CURRENT operator — whoever last changed a result gets
+    // credited for it.
+    state.checks[id].assy_no=state.operator;
+    state.checks[id].timestamp=new Date().toISOString();
+  }
   applyCheckVisual(id); updateChecksProgress(); updateNavBadges();
   const stamp=document.getElementById(`assy-${id}`);
-  if(stamp) stamp.textContent=`OP ${state.checks[id].assy_no}`;
+  if(stamp) stamp.textContent=`OP ${(state.checks[id]&&state.checks[id].assy_no)||state.operator}`;
+  if (clearing) showToast('Check cleared — tap PASS / FAIL / N/A to mark it again', 'warn');
   // Auto-persist to DB on every check tap — so half-filled cards survive
   if (state.buildId) {
     supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId).then(({error})=>{
@@ -1341,14 +1358,14 @@ function setCheck(id,result) {
   const cfg=getCardConfig();
   const checkDef = (cfg.checks||cfg.stages||[]).find(c=>c.id===id);
   const label = checkDef ? checkDef.label : id;
-  logActivity('CHECK_MARKED', null, {
+  logActivity(clearing ? 'CHECK_CLEARED' : 'CHECK_MARKED', null, {
     check_id: id,
     check_label: label,
-    result: result,
+    result: clearing ? 'UNMARKED' : result,
     prev_result: prevResult || 'UNMARKED',
-    assy_no: state.checks[id].assy_no,
+    assy_no: clearing ? state.operator : state.checks[id].assy_no,
     prev_assy_no: prevOp || 'none',
-    timestamp: state.checks[id].timestamp
+    timestamp: clearing ? new Date().toISOString() : state.checks[id].timestamp
   });
 }
 
@@ -1378,9 +1395,15 @@ function editAssyNo(id) {
 }
 
 function applyCheckVisual(id) {
-  const chkData=state.checks[id]; if(!chkData||!chkData.result) return;
-  const result=chkData.result;
   const row=document.getElementById(`chk-row-${id}`); if(!row) return;
+  const chkData=state.checks[id];
+  if(!chkData||!chkData.result){
+    // No result on THIS card — make sure nothing is shown as selected
+    row.removeAttribute('data-result');
+    row.querySelectorAll('.chk-btn').forEach(b=>b.classList.remove('selected'));
+    return;
+  }
+  const result=chkData.result;
   const isPass=result==='PASS'||result==='GO';
   const isFail=result==='FAIL'||result==='NO-GO';
   row.setAttribute('data-result',isPass?'PASS':isFail?'FAIL':'N/A');
@@ -1662,6 +1685,7 @@ async function autoSaveIdentity() {
   });
   state.formData.status    = state.formData.status    || 'IN PROGRESS';
   state.formData.card_type = state.cardType;
+  delete state.formData.checks;   // see loadBuild — never write a checks snapshot from identity
 
   try {
     let result, error;
