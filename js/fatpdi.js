@@ -150,7 +150,7 @@ async function _loadFatPdiUnits(reset) {
   try {
     const serialCol = fatpdi.cardType === 'GRN40' ? 'sight_serial' : 'launcher_serial';
     let q = supabaseClient.from('weapon_builds')
-      .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,status',
+      .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,status,checks',
               { count: 'exact' })
       .eq('card_type', fatpdi.cardType)
       .not(serialCol, 'is', null);
@@ -163,7 +163,14 @@ async function _loadFatPdiUnits(reset) {
     const { data, count } = await q;
     fatpdi.totalCount = count || 0;
 
-    const pageUnits = (data || []).map(r => ({
+    // 21/10/2026: a unit whose build card still carries a FAIL / NO-GO is NOT
+    // offered for FAT or PDI (strict rule — it must be reworked and passed
+    // first). v1.21 blocks sign-off with a FAIL, so this only ever applies to
+    // cards completed before that rule; Admin Preview still lists them, tagged.
+    const hasFail = r => Object.values(r.checks || {}).some(v => v && ['FAIL','NO-GO'].includes(v.result));
+    const skippedFails = (data || []).filter(r => hasFail(r) && !fatpdi.adminPreview).length;
+    const pageUnits = (data || []).filter(r => fatpdi.adminPreview || !hasFail(r)).map(r => ({
+      openFails: Object.values(r.checks || {}).filter(v => v && ['FAIL','NO-GO'].includes(v.result)).length,
       unitSerial: fatpdi.cardType === 'GRN40' ? r.sight_serial : r.launcher_serial,
       launcherSerial: fatpdi.cardType === 'GRN40' ? null : r.launcher_serial,
       sightSerial: r.sight_serial || null,
@@ -173,7 +180,8 @@ async function _loadFatPdiUnits(reset) {
     }));
 
     fatpdi.units = fatpdi.units.concat(pageUnits);
-    fatpdi.offset += pageUnits.length;
+    fatpdi.offset += (data || []).length;
+    if (skippedFails) showToast(`⚠ ${skippedFails} unit(s) held back — build card has an open FAIL`, 'warn');
 
     // Doc control footer — pulled live from Document Revision Control
     try {
@@ -246,8 +254,9 @@ function _renderFatPdiGrid() {
     const us = u.unitSerial;
     if (!fatpdi.results[us]) fatpdi.results[us] = {};
     html += `<tr>`;
-    const statusTag = fatpdi.adminPreview && u.status !== 'COMPLETE'
-      ? `<br><span style="font-size:9px;color:#e08f1a;">${u.status||'IN PROGRESS'} (preview)</span>` : '';
+    const statusTag = (fatpdi.adminPreview && u.status !== 'COMPLETE'
+      ? `<br><span style="font-size:9px;color:#e08f1a;">${u.status||'IN PROGRESS'} (preview)</span>` : '')
+      + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} FAIL on build card</span>` : '');
     html += `<td style="position:sticky;left:0;background:var(--bg,#0a1628);font-family:var(--font-mono,monospace);font-weight:700;">${us}${u.sightSerial && u.launcherSerial ? `<br><span style="font-size:10px;color:var(--text-dim,#8fa3c0);">Sight ${u.sightSerial}</span>` : ''}${statusTag}</td>`;
     html += `<td style="font-size:12px;">${u.trolleyNumber||'—'} / ${u.trolleyPosition||'—'}</td>`;
     items.forEach(it => {
