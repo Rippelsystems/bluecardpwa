@@ -75,6 +75,17 @@ function showSection(id) {
       show('screen-identity');
       return;
     }
+    // Block while any check is FAIL / NO-GO — the unit must be reworked and
+    // each failed check re-marked PASS (with its rework note) first.
+    const fails = openFails();
+    if (fails.length > 0) {
+      showToast(`🚫 ${fails.length} FAILED check(s) must be fixed and passed before sign-off: `
+                + fails.slice(0,3).map(c=>c.label).join(', ') + (fails.length>3?' + more':''), 'error');
+      fails.forEach(c => { const row = document.getElementById('chk-row-' + c.id);
+        if (row) { row.style.border='2px solid var(--fail)'; row.style.borderRadius='6px'; } });
+      show('screen-checks');
+      return;
+    }
     if (missing.length > 0) {
       showToast('⚠ Complete all checks before sign-off: ' + missing.slice(0,3).join(', ') + (missing.length>3?' + more':''), 'error');
       // Highlight incomplete rows
@@ -302,26 +313,54 @@ function goToResume() {
 // also deletes that row and frees the serial back to UNBUILT, logging the
 // cancellation first so it's traceable in the audit trail.
 async function cancelBuildCard() {
-  if (!confirm('Cancel this build card?\n\nAny saved data for this card will be permanently deleted. This cannot be undone.')) {
+  // 21/10/2026 (v1.20): a reason is compulsory and goes into the audit trail.
+  // Nothing is deleted until a reason has been given.
+  const serialNow = _unitIdentifierSerial();
+  const done = Object.values(state.checks || {}).filter(v => v && v.result).length;
+  const reasonRaw = prompt(
+    `CANCEL / DISCARD THIS CARD\n\n` +
+    `Serial: ${serialNow || '(no serial yet)'}\n` +
+    `Checks marked: ${done}\n` +
+    `Operator: OP ${state.operator}\n\n` +
+    `Why is this card being cancelled? (required)\n` +
+    `e.g. wrong serial, started twice, wrong card type`);
+  if (reasonRaw === null) return;                 // operator backed out
+  const reason = reasonRaw.trim();
+  if (!reason) {
+    showToast('A reason is required to cancel a card', 'error');
+    return;
+  }
+  if (!confirm(`Cancel card ${serialNow || ''}?\n\nReason: ${reason}\n\n` +
+               `Any saved data for this card will be permanently deleted. This cannot be undone.`)) {
     return;
   }
 
   if (!state.buildId) {
-    // Nothing was ever saved to Supabase — pure local reset.
+    // Nothing was ever saved to Supabase — pure local reset (still logged if
+    // a serial had been confirmed, so the attempt is on the trail).
+    if (serialNow) {
+      await logActivity('BUILD_CANCELLED', {
+        cancelled_by: state.operator, reason, checks_marked: done, saved_card: false
+      }, null);
+    }
     showToast('Card discarded', 'ok');
     goToResume();
     return;
   }
 
   try {
-    const unitSerial = _unitIdentifierSerial();
+    const unitSerial = serialNow;
     if (unitSerial) {
-      await logActivity('BUILD_CANCELLED', { cancelled_by: state.operator }, null);
+      await logActivity('BUILD_CANCELLED', {
+        cancelled_by: state.operator, reason, checks_marked: done,
+        trolley: state.formData.trolley_number || null,
+        position: state.formData.trolley_position || null
+      }, null);
     }
     await supabaseClient.from('weapon_builds').delete().eq('id', state.buildId);
     if (unitSerial) {
       await supabaseClient.from('weapon_serials')
-        .update({ status: 'UNBUILT' })
+        .update({ status: 'UNBUILT', checks_done: 0, pct_complete: 0 })
         .eq('serial_number', unitSerial);
     }
     showToast('✅ Card cancelled and deleted', 'ok');
@@ -1392,6 +1431,7 @@ function buildCheckRows(container, checks) {
         </div>
       </div>
       ${measField}
+      ${saved.rework_note?`<div style="font-size:11px;color:#1a9e5c;margin-top:6px;">🔧 Reworked by OP ${saved.rework_by||'?'}: ${String(saved.rework_note).replace(/</g,'&lt;')}</div>`:''}
       <div class="check-btns" style="margin-top:8px;">
         <button class="chk-btn pass" onclick="setCheck('${chk.id}','${btnLabel1}')">${btnLabel1}</button>
         <button class="chk-btn fail" onclick="setCheck('${chk.id}','${btnLabel2}')">${btnLabel2}</button>
@@ -1423,6 +1463,7 @@ function buildGRN40Stages(container, stages) {
       </div>
       ${s.process?`<div style="font-size:9px;color:var(--text-dim);margin-bottom:4px;">${s.process}</div>`:''}
       <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;font-family:var(--font-mono);">${s.partNo}</div>
+      ${saved.rework_note?`<div style="font-size:9px;color:#1a9e5c;margin-bottom:4px;">🔧 OP ${saved.rework_by||'?'}: ${String(saved.rework_note).replace(/</g,'&lt;')}</div>`:''}
       <div class="check-btns" style="margin-top:6px;gap:4px;">
         <button class="chk-btn pass" onclick="setCheck('${s.id}','PASS')" style="font-size:9px;padding:5px 2px;">✓</button>
         <button class="chk-btn fail" onclick="setCheck('${s.id}','FAIL')" style="font-size:9px;padding:5px 2px;">✗</button>
@@ -1434,10 +1475,51 @@ function buildGRN40Stages(container, stages) {
   container.appendChild(grid);
 }
 
+// ─── FAIL RULES (21/10/2026, v1.21) ──────────────────────────────────────────
+// A FAIL / NO-GO is a defect on the unit. It is cleared ONLY by re-marking
+// the check PASS / GO after rework, with a compulsory note of what was found
+// and what was done (logged CHECK_REWORKED, kept on the check). N/A is never
+// a way out of a FAIL, and never replaces a PASS — N/A is only for a check
+// that has not been marked. A FAIL cannot be un-ticked. While any check is
+// FAIL the card cannot be signed off, so it can never reach FAT or PDI.
+const _FAIL_RESULTS = ['FAIL', 'NO-GO'];
+const _PASS_RESULTS = ['PASS', 'GO'];
+function _isFail(r) { return _FAIL_RESULTS.includes(r); }
+function _isPass(r) { return _PASS_RESULTS.includes(r); }
+function openFails() {
+  const cfg = getCardConfig();
+  const defs = cfg.checks || cfg.stages || [];
+  return defs.filter(c => _isFail((state.checks[c.id] || {}).result));
+}
+
 function setCheck(id,result) {
   if(!state.checks[id]) state.checks[id]={};
   const prevResult = state.checks[id].result;
   const prevOp = state.checks[id].assy_no;
+  const cfgDef = (getCardConfig().checks || getCardConfig().stages || []).find(c => c.id === id);
+  const labelNow = cfgDef ? cfgDef.label : id;
+
+  // ── Strict FAIL rules ──
+  if (_isFail(prevResult)) {
+    if (result === prevResult) { showToast('A FAIL cannot be cleared — fix it, then tap PASS and record what was done', 'error'); return; }
+    if (result === 'N/A')      { showToast('N/A is not allowed on a failed check — it must be fixed and re-marked PASS', 'error'); return; }
+    if (_isPass(result)) {
+      const noteRaw = prompt(
+        `REWORK — ${labelNow}\n\nThis check was marked ${prevResult}.\n` +
+        `Describe what was found and what was done to fix it (required):`);
+      if (noteRaw === null) return;
+      const note = noteRaw.trim();
+      if (!note) { showToast('A rework description is required before a FAIL can be passed', 'error'); return; }
+      state.checks[id].rework_note = note;
+      state.checks[id].rework_by   = state.operator;
+      state.checks[id].rework_at   = new Date().toISOString();
+      state.checks[id].failed_by   = prevOp || null;
+    }
+  } else if (result === 'N/A' && _isPass(prevResult)) {
+    showToast('N/A cannot replace a PASS — tap PASS again to clear it first', 'error'); return;
+  }
+  const reworked = _isFail(prevResult) && _isPass(result);
+
   // Tapping the button that is already selected UNTICKS the check — the
   // result is cleared, the count drops, and the card can be signed off only
   // once it has been marked again. (Measurement values are kept.)
@@ -1470,9 +1552,11 @@ function setCheck(id,result) {
       const total=cfg.stages?cfg.stages.length:cfg.checks.length;
       const done=Object.values(state.checks).filter(v=>v&&v.result).length;
       const pct=total>0?Math.round(done/total*100):0;
-      // Only update to COMPLETE via handleSubmit — here just ensure IN PROGRESS
+      // Only update to COMPLETE via handleSubmit — here just ensure IN PROGRESS.
+      // open_fails = checks currently FAIL/NO-GO (shown on the Project Dashboard)
       supabaseClient.from('weapon_serials')
-        .update({status:'IN PROGRESS', checks_done:done, checks_total:total, pct_complete:pct})
+        .update({status:'IN PROGRESS', checks_done:done, checks_total:total, pct_complete:pct,
+                 open_fails: openFails().length})
         .eq('serial_number', regSerial)
         .then(()=>{});
     }
@@ -1481,13 +1565,14 @@ function setCheck(id,result) {
   const cfg=getCardConfig();
   const checkDef = (cfg.checks||cfg.stages||[]).find(c=>c.id===id);
   const label = checkDef ? checkDef.label : id;
-  logActivity(clearing ? 'CHECK_CLEARED' : 'CHECK_MARKED', null, {
+  logActivity(clearing ? 'CHECK_CLEARED' : (reworked ? 'CHECK_REWORKED' : 'CHECK_MARKED'), null, {
     check_id: id,
     check_label: label,
     result: clearing ? 'UNMARKED' : result,
     prev_result: prevResult || 'UNMARKED',
     assy_no: clearing ? state.operator : state.checks[id].assy_no,
     prev_assy_no: prevOp || 'none',
+    rework_note: reworked ? state.checks[id].rework_note : undefined,
     timestamp: clearing ? new Date().toISOString() : state.checks[id].timestamp
   });
 }
@@ -1630,6 +1715,11 @@ function refreshSignoff() {
 }
 
 async function handleSubmit() {
+  if (openFails().length > 0) {
+    showToast('🚫 This card has FAILED checks — it cannot be signed off until they are fixed and passed', 'error');
+    showSection('checks');
+    return;
+  }
   const qa=document.getElementById('inp-qa-operator').value.trim();
   const fat=document.getElementById('inp-fat-name').value.trim();
   if(!qa){showToast('QA operator number required','error');return;}
