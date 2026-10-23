@@ -21,9 +21,11 @@ function show(screenId) {
   const el = document.getElementById(screenId);
   if (el) { el.classList.add('active'); window.scrollTo(0,0); }
   document.querySelectorAll('.nav-tab').forEach(t =>
-    t.classList.toggle('active', t.dataset.screen === screenId));
+    t.classList.toggle('active', t.dataset.screen === screenId &&
+      (!t.dataset.stage || (typeof fatpdi !== 'undefined' && t.dataset.stage === fatpdi.stage))));
   const nav = document.getElementById('bottom-nav');
-  const hideNav = ['screen-login','screen-complete','screen-fatpdi'].includes(screenId);
+  // v1.22: FAT / PDI live on the bar now, so the bar stays while they are open
+  const hideNav = ['screen-login','screen-complete'].includes(screenId);
   if (nav) nav.classList.toggle('hidden', hideNav);
   const swBtn = document.getElementById('switch-op-btn');
   if (swBtn) swBtn.style.display = hideNav ? 'none' : 'block';
@@ -724,20 +726,26 @@ async function confirmLauncherSerial() {
 
   if (btn) { btn.textContent = '✓'; btn.disabled = false; }
 
-  // ── STEP 7: All checks passed — confirmed ───────────────────────────────
+  // ── STEP 7: All checks passed — claim the serial, THEN show confirmed ───
   state.formData.launcher_serial = s1;
   state.serialVerified = true;
+  if (lv) { lv.style.display = 'block'; lv.style.color = 'var(--text-dim)';
+            lv.textContent = `⏳ Registering ${s1}…`; }
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
+  const claimed = await _claimSerialNow();       // creates the card row now
+  if (btn) { btn.textContent = '✓'; btn.disabled = false; }
+  if (!state.serialVerified) return;             // taken by another tablet — _refuseTaken showed why
   if (inp1) { inp1.style.borderBottomColor = 'var(--pass)'; inp1.style.backgroundColor = ''; }
   if (inp2) { inp2.style.borderBottomColor = 'var(--pass)'; inp2.style.backgroundColor = ''; }
   if (lv) {
     lv.style.display = 'block';
-    lv.textContent   = `✓ Serial confirmed and registered — ${s1}`;
-    lv.style.color   = 'var(--pass)';
+    lv.textContent   = claimed ? `✓ Serial confirmed and registered — ${s1}`
+                               : `✓ Serial confirmed — ${s1} (not saved yet — check Wi-Fi, it will retry)`;
+    lv.style.color   = claimed ? 'var(--pass)' : 'var(--warn)';
   }
   if (lw) lw.style.display = 'none';
   showToast(`✓ Serial confirmed — ${s1}`, 'ok');
-  // Auto-save immediately — serial confirmed is the most critical moment
-  autoSaveIdentity();
+  updateUnitStrip();
 }
 
 // ─── GRN40 SIGHT SERIAL CONFIRM ───────────────────────────────────────────────
@@ -867,20 +875,23 @@ async function confirmSightSerial() {
   }
   if (dupe) { _showSightDuplicate(s, dupe); _resetBtn(); return; }
 
-  _resetBtn();
-
-  // ── STEP 5: All checks passed — confirmed ─────────────────────────────
+  // ── STEP 5: All checks passed — claim the serial, THEN show confirmed ─
   state.formData.sight_serial = s;
   state.serialVerified = true;
+  if (sv) { sv.style.display = 'block'; sv.style.color = 'var(--text-dim)';
+            sv.textContent = `⏳ Registering ${s}…`; }
+  const claimed = await _claimSerialNow();       // creates the card row now
+  _resetBtn();
+  if (!state.serialVerified) return;             // taken by another tablet — _refuseTaken showed why
   if (inp) { inp.style.borderBottomColor = 'var(--pass)'; inp.style.backgroundColor = ''; }
   if (sv) {
     sv.style.display = 'block';
-    sv.style.color   = 'var(--pass)';
-    sv.textContent   = `✓ Sight serial confirmed and registered — ${s}`;
+    sv.style.color   = claimed ? 'var(--pass)' : 'var(--warn)';
+    sv.textContent   = claimed ? `✓ Sight serial confirmed and registered — ${s}`
+                               : `✓ Sight serial confirmed — ${s} (not saved yet — check Wi-Fi, it will retry)`;
   }
   showToast(`✓ Sight serial confirmed — ${s}`, 'ok');
-  // Auto-save immediately, same as launcher confirm
-  autoSaveIdentity();
+  updateUnitStrip();
 }
 
 async function saveIdentity() {
@@ -995,7 +1006,7 @@ function _serialColumn() {
 
 async function _findExistingBuild(serial) {
   let q = supabaseClient.from('weapon_builds')
-    .select('id,status,checks,card_type')
+    .select('id,status,checks,card_type,operator_number,trolley_number,trolley_position')
     .eq(_serialColumn(), serial);
   if (state.cardType === 'GRN40') q = q.eq('card_type', 'GRN40');
   const { data } = await q.order('created_at', { ascending: true }).limit(1);
@@ -1016,18 +1027,29 @@ async function _createBuildRow(payload) {
     return { data: null, error: { message: 'No serial on this card yet — confirm the serial first' } };
   }
   const run = (async () => {
-    // 1. Adopt an existing card for this serial rather than create a second
+    // 1. A card already exists for this serial.
+    //    23/10/2026 (v1.22): adopt it ONLY if it is this operator's own card
+    //    (the v1.19 double-insert on one tablet). If ANOTHER operator created
+    //    it — two tablets confirming the same serial seconds apart — refuse:
+    //    v1.19 adopted it silently and both men ended up on one card.
     if (serial) {
       const existing = await _findExistingBuild(serial);
-      if (existing) return _adoptBuild(existing, payload, serial);
+      if (existing) {
+        return _isOwnCard(existing) ? _adoptBuild(existing, payload, serial)
+                                    : _refuseTaken(serial, existing);
+      }
     }
     // 2. Create it
     const { data, error } = await supabaseClient.from('weapon_builds')
       .insert(payload).select();
     if (error && (error.code === '23505' || /duplicate key|unique/i.test(error.message || ''))) {
       // The database refused a second row — someone else created it first
+      // (the unique index is the real lock: whichever tablet lands first owns it)
       const existing = serial ? await _findExistingBuild(serial) : null;
-      if (existing) return _adoptBuild(existing, payload, serial);
+      if (existing) {
+        return _isOwnCard(existing) ? _adoptBuild(existing, payload, serial)
+                                    : _refuseTaken(serial, existing);
+      }
     }
     if (!error && data && data.length) {
       if (_unitIdentifierSerial() === serial) {
@@ -1044,6 +1066,67 @@ async function _createBuildRow(payload) {
   })();
   _createInFlight = run;
   try { return await run; } finally { if (_createInFlight === run) _createInFlight = null; }
+}
+
+function _isOwnCard(existing) {
+  const op = existing && existing.operator_number;
+  return !!op && String(op).trim() === String(state.operator || '').trim();
+}
+
+// 23/10/2026 (v1.22): another tablet took this serial first. Drop the
+// confirmation on this tablet, clear the serial boxes and tell the operator
+// whose card it is — he must pick another serial. Logged so the Audit Trail
+// shows the clash.
+async function _refuseTaken(serial, existing) {
+  const who = existing.operator_number ? `OP ${existing.operator_number}` : 'another operator';
+  const where = `Trolley ${existing.trolley_number || '?'} · Pos ${existing.trolley_position || '?'}`;
+  const msg = `🚫 ${serial} was just taken by ${who} — pick another serial`;
+  try {
+    await supabaseClient.from('weapon_build_sessions').insert({
+      launcher_serial: serial, operator_number: state.operator,
+      action: 'SERIAL_TAKEN_BY_OTHER',
+      fields_updated: JSON.stringify({ serial, taken_by: existing.operator_number || null,
+                                       build_id: existing.id, trolley: existing.trolley_number || null,
+                                       position: existing.trolley_position || null })
+    });
+  } catch (e) { /* best effort */ }
+  state.serialVerified = false;
+  state.buildId = null;
+  if (state.cardType === 'GRN40') {
+    state.formData.sight_serial = null;
+    const inp = document.getElementById('inp-sight-serial');
+    if (inp) { inp.value = ''; inp.style.borderBottomColor = 'var(--fail)'; }
+    const sv = document.getElementById('sight-verified');
+    if (sv) { sv.style.display = 'block'; sv.style.color = 'var(--fail)';
+              sv.innerHTML = `${msg}<br><small style="color:#ffaaaa">${where}</small>`; }
+  } else {
+    state.formData.launcher_serial = null;
+    const i1 = document.getElementById('inp-launcher-serial');
+    const i2 = document.getElementById('inp-launcher-confirm');
+    if (i1) { i1.value = ''; i1.style.borderBottomColor = 'var(--fail)'; }
+    if (i2) { i2.value = ''; i2.style.borderBottomColor = 'var(--fail)'; }
+    const lv = document.getElementById('launcher-verified');
+    if (lv) { lv.style.display = 'block'; lv.style.color = 'var(--fail)';
+              lv.innerHTML = `${msg}<br><small style="color:#ffaaaa">${where}</small>`; }
+    const lw = document.getElementById('launcher-confirm-wrap');
+    if (lw) lw.style.display = '';
+  }
+  showToast(msg, 'error');
+  return { data: null, error: { code: 'SERIAL_TAKEN', message: msg } };
+}
+
+// 23/10/2026 (v1.22): the serial is CLAIMED the moment ✓ is tapped — the
+// card row is created right here and the operator waits for it, so a second
+// tablet confirming the same serial a moment later meets the row (or the
+// unique index) and is refused. v1.19–1.21 fired the create in the
+// background and showed "confirmed" before the row existed.
+async function _claimSerialNow() {
+  const t0 = Date.now();
+  while (_autoSaving && Date.now() - t0 < 4000) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  await autoSaveIdentity();
+  return state.serialVerified && !!state.buildId;
 }
 
 async function _applyToExisting(payload) {
@@ -1389,10 +1472,41 @@ async function loadSerialsForProject(project) {
 }
 
 // ─── CHECKS ───────────────────────────────────────────────────────────────────
+// 23/10/2026 (v1.22): the unit you are working on, carried onto the Checks
+// and Sign-off pages — serial large, trolley/position and contract under it,
+// and the serial in the sticky top bar so it stays visible while scrolling.
+// Identity page only; FAT and PDI are a separate process and are untouched.
+function updateUnitStrip() {
+  const serial = _unitIdentifierSerial();
+  const cfg = getCardConfig();
+  const kind = state.cardType === 'GRN40' ? 'Sight' : 'Launcher';
+  const tp = `Trolley ${state.formData.trolley_number || '—'} · Pos ${state.formData.trolley_position || '—'}`;
+  const contract = state.formData.contract_name
+    ? `${state.formData.contract_name}${state.formData.client_country ? ' · ' + state.formData.client_country : ''}`
+    : 'No contract selected';
+  ['unit-strip-checks', 'unit-strip-signoff'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!serial) {
+      el.className = 'unit-strip unit-strip-none';
+      el.innerHTML = `<div class="unit-strip-serial">NO SERIAL CONFIRMED</div>
+                      <div class="unit-strip-sub">Go to Identity and confirm the ${kind.toLowerCase()} serial with ✓ first</div>`;
+      return;
+    }
+    el.className = 'unit-strip';
+    el.innerHTML = `<div class="unit-strip-kind">${kind} serial</div>
+                    <div class="unit-strip-serial">${serial}</div>
+                    <div class="unit-strip-sub">${tp} &nbsp;·&nbsp; ${contract} &nbsp;·&nbsp; ${cfg.label || state.cardType}</div>`;
+  });
+  const ct = document.getElementById('checks-title');
+  if (ct) ct.textContent = serial ? `${serial}` : 'Inspection Checks';
+}
+
 function refreshChecks() {
   const cfg=getCardConfig();
   const container=document.getElementById('checks-list');
   const total = cfg.stages ? cfg.stages.length : cfg.checks.length;
+  updateUnitStrip();
 
   // Always rebuild from state.checks. The old shortcut re-used the rows
   // already on screen and only re-applied ticks that the new card HAD —
@@ -1709,9 +1823,10 @@ function refreshSignoff() {
   const fails=Object.values(state.checks).filter(v=>v&&(v.result==='FAIL'||v.result==='NO-GO')).length;
   document.getElementById('so-checks').textContent=`${done} / ${total}`;
   const fb=document.getElementById('so-fails'); fb.textContent=fails; fb.className=`badge ${fails>0?'fail':'pass'}`;
-  if(state.formData.qa_operator) document.getElementById('inp-qa-operator').value=state.formData.qa_operator;
-  if(state.formData.qa_note) document.getElementById('inp-qa-note').value=state.formData.qa_note;
+  // v1.22: no QA / FAT boxes any more — the logged-in operator is the sign-off
+  const soOp=document.getElementById('so-signoff-op'); if(soOp) soOp.textContent=state.operator||'—';
   updateCardBadges();
+  updateUnitStrip();
 }
 
 async function handleSubmit() {
@@ -1720,17 +1835,19 @@ async function handleSubmit() {
     showSection('checks');
     return;
   }
-  const qa=document.getElementById('inp-qa-operator').value.trim();
-  const fat=document.getElementById('inp-fat-name').value.trim();
-  if(!qa){showToast('QA operator number required','error');return;}
-  if(!fat){showToast('FAT name required','error');return;}
+  // v1.22 (23/10/2026): the FAT-name / QA-operator / notes boxes are gone —
+  // the operator logged in on the tablet IS the sign-off (qa_operator), and
+  // every check already carries its own operator stamp. fat_name / fat_date
+  // are left empty (FAT is its own process on the FAT tab).
+  const qa=String(state.operator||'').trim();
+  if(!qa){showToast('Log in first — the sign-off is recorded against your operator number','error');return;}
+  if(!confirm(`Sign off ${_unitIdentifierSerial()||'this card'} as OP ${qa} and mark it COMPLETE?`)) return;
   const btn=document.getElementById('btn-submit');
   btn.textContent='Saving…'; btn.disabled=true;
   const cfg=getCardConfig();
   const total=cfg.stages?cfg.stages.length:cfg.checks.length;
   const updates={
-    qa_operator:qa,qa_note:document.getElementById('inp-qa-note').value.trim()||null,
-    fat_name:fat,fat_date:document.getElementById('inp-fat-date').value||null,
+    qa_operator:qa,
     completed_at:new Date().toISOString(),checks:state.checks,
     checks_complete:Object.values(state.checks).filter(v=>v&&v.result).length===total,
     status:'COMPLETE'
@@ -1742,7 +1859,7 @@ async function handleSubmit() {
   if(!error&&regSerial){
     await supabaseClient.from('weapon_serials').update({status:'COMPLETE'}).eq('serial_number',regSerial);
   }
-  await logActivity('QA_SIGNOFF',{qa_operator:qa,fat_name:fat},state.checks);
+  await logActivity('QA_SIGNOFF',{qa_operator:qa,signed_off_by:qa},state.checks);
   btn.textContent='Submit & Save Build Card'; btn.disabled=false;
   if(error){console.error(error);showToast('Save failed','error');return;}
   showToast('Build card saved ✓','ok');
