@@ -402,3 +402,19 @@ textarea { resize: vertical; min-height: 72px; }
 }
 .resume-card:active { border-color: var(--accent); }
 .loading-msg { text-align:center; color:var(--text-dim); font-size:13px; padding:16px 0; }
+
+/* ─── UNIT STRIP (v1.22, 23/10/2026) — the serial being worked on, carried
+   onto the Checks and Sign-off pages ─────────────────────────────────── */
+.unit-strip {
+  background: #0f2a4a;
+  border: 1px solid #2f5f9a;
+  border-left: 5px solid var(--accent, #1a6cf0);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 0 0 14px 0;
+}
+.unit-strip-kind   { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #8fa3c0; }
+.unit-strip-serial { font-family: var(--font-mono, monospace); font-size: 26px; font-weight: 800; color: #ffffff; line-height: 1.15; }
+.unit-strip-sub    { font-size: 12px; color: #c9d6e8; margin-top: 2px; }
+.unit-strip-none   { border-left-color: #d93025; background: #3a1a1a; border-color: #7a2a2a; }
+.unit-strip-none .unit-strip-serial { font-size: 16px; color: #ff9a9a; }
