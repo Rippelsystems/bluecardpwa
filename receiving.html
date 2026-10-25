@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Rippel Matrix — Book Arrival</title>
+<!-- ─────────────────────────────────────────────────────────────────────────
+  receiving.html — Book Arrival on the tablet (v1.1, 25 Oct 2026)
+  v1.1: "‹ Menu" on the first screen returns to menu.html (the tablet front page).
+  Lives in the Blue Card repo (bluecardpwa) next to index.html, behind the
+  same site password. Books normal component deliveries through ONE database
+  function (tablet_book_arrival — run tablet_book_arrival_25Oct.sql first).
+  LIVE by default; add ?env=test to the address to use the TEST database.
+  Stock does not move here — it moves at QC, exactly as on the laptop.
+──────────────────────────────────────────────────────────────────────────── -->
+<!-- ── SITE ACCESS GATE (same as index.html — see js/sitegate.js) ── -->
+<style>
+  html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
+  #bcds-gate { position: fixed; inset: 0; z-index: 99999; background: #0a1628;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    font-family: system-ui, sans-serif; }
+  #bcds-gate .bcds-card { width: 100%; max-width: 360px; background: #111f38;
+    border: 1px solid #1e3354; border-radius: 14px; padding: 28px 24px; }
+  #bcds-gate .bcds-brand { color: #4a9eff; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.18em; text-align: center; }
+  #bcds-gate .bcds-title { color: #fff; font-size: 26px; font-weight: 800;
+    text-align: center; margin-top: 8px; }
+  #bcds-gate .bcds-sub { color: #6f86a8; font-size: 12px; text-align: center;
+    margin: 4px 0 22px; }
+  #bcds-gate label { display: block; color: #8fa3c0; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.08em; margin-bottom: 6px; }
+  #bcds-gate input { width: 100%; box-sizing: border-box; padding: 13px 14px;
+    font-size: 16px; border-radius: 8px; border: 1px solid #1e3354; background: #f1f3f6;
+    color: #0a1628; outline: none; }
+  #bcds-gate #bcds-err { color: #ff6b6b; font-size: 12px; font-weight: 600;
+    min-height: 18px; margin: 8px 0 4px; text-align: center; }
+  #bcds-gate button { width: 100%; padding: 13px; font-size: 15px; font-weight: 700;
+    border: none; border-radius: 8px; background: #1a6cf0; color: #fff; cursor: pointer; }
+  #bcds-gate button:disabled { opacity: 0.6; }
+  #bcds-gate .bcds-note { color: #4a6a8a; font-size: 11px; text-align: center; margin-top: 12px; }
+</style>
+<script>
+  (function () {
+    var ok = false;
+    try { var v = JSON.parse(localStorage.getItem('bcds_site_access_v1') || 'null'); ok = !!(v && v.until > Date.now()); } catch (e) {}
+    if (!ok) document.documentElement.classList.add('bcds-locked');
+  })();
+</script>
+<style>
+  :root{
+    --navy:#1F3864; --green:#1B5E20; --amber:#E65100; --red:#B71C1C;
+    --bg:#F2F4F7; --panel:#FFFFFF; --border:#D8DEE8; --text:#1A2333; --muted:#6B7688;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; min-height:100%; background:var(--bg);
+    font-family:"Segoe UI",Roboto,Arial,sans-serif; color:var(--text);
+    -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+  #app{ min-height:100vh; display:flex; flex-direction:column; }
+
+  header{ background:var(--navy); color:#fff; padding:14px 20px; display:flex;
+    align-items:center; gap:14px; position:sticky; top:0; z-index:10; }
+  header .titles{ flex:1; min-width:0; }
+  header h1{ margin:0; font-size:20px; font-weight:700; }
+  header .sub{ font-size:12px; color:#A8C4E0; margin-top:2px; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  header .who{ font-size:13px; color:#C8D6EA; text-align:right; }
+  header .file{ position:absolute; top:3px; right:8px; font-size:9px; color:#8DA2C2; }
+  header button{ background:rgba(255,255,255,.14); border:none; color:#fff;
+    font-size:15px; font-weight:600; padding:11px 16px; border-radius:8px; }
+  .envbar{ text-align:center; font-weight:700; font-size:13px; padding:5px; color:#fff; }
+  .env-live{ background:var(--green); }
+  .env-test{ background:var(--red); }
+
+  main{ flex:1; padding:18px 20px 120px; max-width:1100px; width:100%; margin:0 auto; }
+  .label{ font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.6px; margin:18px 0 8px 2px; }
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:16px 18px; margin-bottom:12px; }
+  .empty{ text-align:center; color:var(--muted); margin-top:50px; font-size:16px; }
+  .err{ background:#FDECEA; border:1px solid var(--red); color:var(--red);
+    padding:12px 16px; border-radius:8px; font-size:15px; margin-bottom:14px; white-space:pre-line; }
+  .warn{ background:#FFF4E5; border:1px solid var(--amber); color:#8A3B00;
+    padding:12px 16px; border-radius:8px; font-size:15px; margin-bottom:14px; white-space:pre-line; }
+  .info{ background:#EAF0FA; border:1px solid #B9CBE6; color:var(--navy);
+    padding:12px 16px; border-radius:8px; font-size:14px; margin-bottom:14px; }
+
+  /* login */
+  .names{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+  .name{ background:var(--panel); border:2px solid var(--border); border-radius:12px;
+    padding:18px 10px; text-align:center; font-size:17px; font-weight:700; }
+  .pinwrap{ display:flex; flex-direction:column; align-items:center; margin-top:10px; }
+  .dots{ display:flex; gap:14px; margin:14px 0 22px; }
+  .dot{ width:18px; height:18px; border-radius:50%; border:2px solid var(--navy); }
+  .dot.f{ background:var(--navy); }
+  .keys{ display:grid; grid-template-columns:repeat(3,84px); gap:14px; }
+  .key{ height:72px; border-radius:14px; border:1px solid var(--border); background:var(--panel);
+    font-size:26px; font-weight:600; color:var(--text); }
+  .key.s{ font-size:14px; color:var(--muted); }
+  .key:active{ background:#EAF0FA; }
+
+  /* PO list */
+  .search{ width:100%; font-size:18px; padding:14px 16px; border-radius:10px;
+    border:1px solid var(--border); margin-bottom:14px; }
+  .po{ display:flex; align-items:center; gap:14px; }
+  .po .num{ font-size:18px; font-weight:700; color:var(--navy); }
+  .po .sup{ font-size:14px; color:var(--muted); margin-top:3px; }
+  .po .grow{ flex:1; min-width:0; }
+  .badge{ font-size:12px; font-weight:700; padding:5px 10px; border-radius:14px; color:#fff;
+    white-space:nowrap; }
+  .b-open{ background:#1565C0; } .b-back{ background:var(--amber); }
+  .b-prod{ background:#ECEFF1; color:var(--text); }
+
+  /* lines */
+  .line{ display:grid; grid-template-columns:44px 1fr auto; gap:14px; align-items:center; }
+  .tick{ width:40px; height:40px; border-radius:10px; border:2px solid var(--border);
+    display:flex; align-items:center; justify-content:center; font-size:24px; color:#fff; }
+  .line.on{ border-color:var(--green); background:#F3FAF3; }
+  .line.on .tick{ background:var(--green); border-color:var(--green); }
+  .line.off{ opacity:.55; }
+  .line .ref{ font-size:13px; color:var(--muted); }
+  .line .desc{ font-size:17px; font-weight:700; margin:2px 0; }
+  .line .nums{ font-size:14px; color:var(--muted); }
+  .line .nums b{ color:var(--text); }
+  .line .why{ font-size:13px; color:var(--amber); font-weight:600; margin-top:4px; }
+  .qty{ display:flex; align-items:center; gap:8px; }
+  .qty button{ width:52px; height:52px; border-radius:10px; border:1px solid var(--border);
+    background:#ECEFF1; font-size:26px; font-weight:700; color:var(--text); }
+  .qty input{ width:96px; height:52px; font-size:22px; font-weight:700; text-align:center;
+    border:2px solid var(--border); border-radius:10px; }
+  .qty .all{ width:auto; padding:0 12px; font-size:13px; }
+  .field{ width:100%; font-size:18px; padding:14px 16px; border:1px solid var(--border);
+    border-radius:10px; }
+  select.field{ background:#fff; }
+
+  /* bottom bar */
+  .bar{ position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--border);
+    padding:12px 20px; display:flex; gap:12px; justify-content:center; z-index:20; }
+  .bar .inner{ display:flex; gap:12px; width:100%; max-width:1100px; align-items:center; }
+  .btn{ border:none; border-radius:10px; padding:16px 22px; font-size:17px; font-weight:700; }
+  .btn.go{ background:var(--green); color:#fff; flex:1; }
+  .btn.go:disabled{ background:#A5C9A8; }
+  .btn.sec{ background:#ECEFF1; color:var(--text); }
+  .btn.amber{ background:var(--amber); color:#fff; }
+  .sum{ font-size:15px; color:var(--muted); }
+
+  table.rev{ width:100%; border-collapse:collapse; font-size:15px; }
+  table.rev th{ text-align:left; color:var(--muted); font-size:12px; text-transform:uppercase;
+    padding:6px 8px; border-bottom:1px solid var(--border); }
+  table.rev td{ padding:10px 8px; border-bottom:1px solid #EEF1F5; vertical-align:top; }
+  .short{ color:var(--amber); font-weight:700; }
+  .done{ text-align:center; margin-top:40px; }
+  .done .tickbig{ width:92px; height:92px; border-radius:50%; background:var(--green); color:#fff;
+    font-size:48px; line-height:92px; margin:0 auto 18px; }
+  .spin{ text-align:center; color:var(--muted); margin-top:60px; font-size:16px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase.js?v=1.22"></script>
+<script src="js/sitegate.js?v=1.22"></script>
+<script>
+"use strict";
+// ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
+// LIVE = the Blue Card connection (js/supabase.js). ?env=test = TEST database.
+const RCV_VERSION = "1.1";
+const RCV_TEST = /(^|[?&])env=test(&|$)/i.test(location.search);
+const RCV_TEST_URL = "https://wtkbsvopuvtxiprjtqqx.supabase.co";
+const RCV_TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0a2Jzdm9wdXZ0eGlwcmp0cXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTUzNjIsImV4cCI6MjA5NjE3MTM2Mn0.q3cRrSbgmgzaw9PzHEuXaic-3Cl-JAiAPVbZnyoY8SQ";
+const db = window.supabase.createClient(
+  RCV_TEST ? RCV_TEST_URL : SUPABASE_URL,
+  RCV_TEST ? RCV_TEST_KEY : SUPABASE_ANON_KEY,
+  { auth: { persistSession: false, autoRefreshToken: false, storageKey: "rcv-" + (RCV_TEST ? "test" : "live") } });
+
+// Same list as Book Arrival on the laptop (frm_receive.py REASON_OPTIONS)
+const REASONS = [
+  "Supplier short-shipped",
+  "Damaged in transit",
+  "Awaiting balance / back-order",
+  "Split across multiple batches on one note",
+  "Quantity discrepancy — to confirm with supplier",
+  "Other (see notes)",
+];
+const IDLE_MINUTES = 5;       // shared tablet: log out after 5 min untouched
+const CALL_TIMEOUT = window.__rcvTimeout || 20000;   // ms — never sit on "Loading…" forever
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+const S = {
+  screen: "names",            // names | pin | pos | lines | review | busy | unsure | done
+  users: [], user: null, pin: "", pinErr: "",
+  pos: [], poSearch: "", posErr: "",
+  po: null, lines: [], blocks: {}, sel: {}, linesErr: "",
+  note: "", notes: "", reason: "", reasonOther: "",
+  ref: null, confirmDup: false, dupRows: null, result: null, err: "",
+};
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+const $ = (h) => { document.getElementById("app").innerHTML = h; };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = (v) => Number(v || 0);
+const rand = (n) => num(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const outstanding = (l) => Math.max(0, num(l.qty_ordered) - num(l.qty_received));
+const newRef = () => (crypto.randomUUID ? crypto.randomUUID()
+  : "r" + Date.now().toString(36) + Math.random().toString(36).slice(2));
+
+function withTimeout(p, ms = CALL_TIMEOUT) {
+  return Promise.race([p, new Promise((_, rej) =>
+    setTimeout(() => rej(new Error("No answer from the database (Wi-Fi?)")), ms))]);
+}
+
+function header(title, sub, back) {
+  return `
+    <div class="envbar ${RCV_TEST ? "env-test" : "env-live"}">${RCV_TEST
+      ? "⚠ TEST MODE — TEST database — NOT live data"
+      : "✓ LIVE — Production database"}</div>
+    <header>
+      <span class="file">receiving.html v${RCV_VERSION}</span>
+      ${back ? `<button onclick="${back}">${back === "toMenu()" ? "‹ Menu" : "‹ Back"}</button>` : ""}
+      <div class="titles"><h1>${esc(title)}</h1><div class="sub">${esc(sub || "")}</div></div>
+      ${S.user ? `<div class="who">${esc(S.user.username)}<br><a style="color:#A8C4E0" href="#" onclick="logout();return false">Log out</a></div>` : ""}
+    </header>`;
+}
+
+// idle logout
+let idleTimer = null;
+function touch() {
+  clearTimeout(idleTimer);
+  if (S.user && !["busy"].includes(S.screen))
+    idleTimer = setTimeout(() => logout("Logged out after " + IDLE_MINUTES + " minutes without use."), IDLE_MINUTES * 60000);
+}
+["pointerdown", "keydown"].forEach(e => document.addEventListener(e, touch, { passive: true }));
+
+function logout(msg) {
+  S.user = null; S.pin = ""; S.po = null; S.sel = {};
+  S.screen = "names"; S.pinErr = msg || "";
+  render();
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+function render() {
+  document.querySelectorAll(".toast").forEach(x => x.remove());
+  ({ names: rNames, pin: rPin, pos: rPos, lines: rLines, review: rReview,
+     busy: rBusy, unsure: rUnsure, done: rDone })[S.screen]();
+}
+
+// 1. who is booking
+async function loadUsers() {
+  S.users = null; render();
+  try {
+    const [u, p] = await withTimeout(Promise.all([
+      db.from("users").select("username, role").eq("active", true).order("username"),
+      db.from("role_permissions").select("role").eq("button_name", "Book Arrival").eq("allowed", true),
+    ]));
+    if (u.error) throw u.error;
+    if (p.error) throw p.error;
+    const ok = new Set((p.data || []).map(r => r.role)); ok.add("Admin");
+    S.users = (u.data || []).filter(x => ok.has(x.role));
+    S.usersErr = "";
+  } catch (e) {
+    S.users = []; S.usersErr = "Could not load names: " + (e.message || e);
+  }
+  render();
+}
+function rNames() {
+  const list = S.users === null ? `<div class="spin">Loading…</div>`
+    : S.users.length ? `<div class="names">${S.users.map((u, i) =>
+        `<div class="name" onclick="pickUser(${i})">${esc(u.username)}</div>`).join("")}</div>`
+    : `<div class="empty">No one may book arrivals yet.<br>Tick “Book Arrival” for the role in Matrix → Admin → Permissions.</div>`;
+  $(header("Book Arrival", "Who is booking?", "toMenu()") + `<main>
+      ${S.pinErr ? `<div class="info">${esc(S.pinErr)}</div>` : ""}
+      ${S.usersErr ? `<div class="err">${esc(S.usersErr)}<br><br><button class="btn sec" onclick="loadUsers()">Try again</button></div>` : ""}
+      <div class="label">Tap your name</div>${list}</main>`);
+}
+function toMenu() { location.href = "menu.html" + (RCV_TEST ? "?env=test" : ""); }
+function pickUser(i) { S.user = { username: S.users[i].username }; S.pin = ""; S.pinErr = ""; S.screen = "pin"; render(); }
+
+// 2. PIN
+function rPin() {
+  const dots = [0, 1, 2, 3].map(i => `<div class="dot ${i < S.pin.length ? "f" : ""}"></div>`).join("");
+  $(header("Book Arrival", "Enter your Matrix PIN", "S.user=null;S.screen='names';render()") + `<main>
+     <div class="pinwrap">
+       <div style="font-size:20px;font-weight:700">${esc(S.user.username)}</div>
+       <div class="dots">${dots}</div>
+       <div class="keys">
+         ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="key" onclick="pinKey('${n}')">${n}</button>`).join("")}
+         <button class="key s" onclick="S.pin='';render()">Clear</button>
+         <button class="key" onclick="pinKey('0')">0</button>
+         <button class="key s" onclick="S.pin=S.pin.slice(0,-1);render()">⌫</button>
+       </div>
+       <div style="color:var(--red);font-weight:600;margin-top:16px;min-height:22px">${esc(S.pinErr)}</div>
+     </div></main>`);
+}
+async function pinKey(d) {
+  if (S.pin.length >= 4) return;
+  S.pin += d; S.pinErr = ""; render();
+  if (S.pin.length < 4) return;
+  try {
+    const { data, error } = await withTimeout(db.rpc("tablet_login", { p_username: S.user.username, p_pin: S.pin }));
+    if (error) throw error;
+    if (!data.ok) { S.pin = ""; S.pinErr = "Incorrect PIN — try again."; return render(); }
+    if (!data.can_book) { S.pin = ""; S.pinErr = `${data.role} may not book arrivals.`; return render(); }
+    S.user = { username: data.username, role: data.role };
+    touch(); openPOs();
+  } catch (e) {
+    S.pin = ""; S.pinErr = "Could not check the PIN: " + (e.message || e); render();
+  }
+}
+
+// 3. PO list — same POs Book Arrival lists (Open / Backorder), raw material left to the laptop
+async function openPOs() {
+  S.screen = "pos"; S.pos = null; S.posErr = ""; render();
+  try {
+    const { data, error } = await withTimeout(db.from("supplier_po")
+      .select("po_number, supplier, product, po_type, status, date_ordered")
+      .in("status", ["Open", "Backorder"]).order("date_ordered", { ascending: false }).limit(2000));
+    if (error) throw error;
+    S.pos = (data || []).filter(p => !/raw material/i.test(p.po_type || ""));
+  } catch (e) { S.pos = []; S.posErr = "Could not load POs: " + (e.message || e); }
+  render();
+}
+function poListHTML() {
+  if (S.pos === null) return `<div class="spin">Loading open POs…</div>`;
+  const q = S.poSearch.trim().toUpperCase();
+  const list = S.pos.filter(p => !q || (p.po_number || "").toUpperCase().includes(q)
+                                    || (p.supplier || "").toUpperCase().includes(q));
+  if (!list.length) return `<div class="empty">No open PO matches “${esc(S.poSearch)}”.</div>`;
+  return list.slice(0, 150).map(p => `
+      <div class="card po" onclick="openPO('${esc(p.po_number)}')">
+        <div class="grow"><div class="num">${esc(p.po_number)}</div>
+          <div class="sup">${esc(p.supplier || "")} · ordered ${esc((p.date_ordered || "").slice(0, 10))}</div></div>
+        ${p.product ? `<span class="badge b-prod">${esc(p.product)}</span>` : ""}
+        <span class="badge ${p.status === "Backorder" ? "b-back" : "b-open"}">${esc(p.status)}</span>
+      </div>`).join("")
+    + (list.length > 150 ? `<div class="empty">${list.length - 150} more — type more of the PO number</div>` : "");
+}
+function rPos() {
+  $(header("Book Arrival", "Choose the PO on the delivery note") + `<main>
+      ${S.posErr ? `<div class="err">${esc(S.posErr)}<br><br><button class="btn sec" onclick="openPOs()">Try again</button></div>` : ""}
+      <input class="search" id="posq" placeholder="Search PO number or supplier" value="${esc(S.poSearch)}"
+             oninput="S.poSearch=this.value;drawPOList()">
+      <div class="info">Raw material deliveries, deliveries straight to a subcontractor, more than ordered,
+        and replacement / rework parts are booked on the laptop.</div>
+      <div id="polist">${poListHTML()}</div></main>`);
+}
+function drawPOList() { const box = document.getElementById("polist"); if (box) box.innerHTML = poListHTML(); }
+
+// 4. the PO's lines
+async function openPO(poNumber) {
+  S.po = (S.pos || []).find(p => p.po_number === poNumber) || { po_number: poNumber };
+  S.screen = "lines"; S.lines = null; S.blocks = {}; S.sel = {}; S.linesErr = "";
+  S.note = ""; S.notes = ""; S.reason = ""; S.reasonOther = ""; S.err = "";
+  render();
+  try {
+    const [l, b] = await withTimeout(Promise.all([
+      db.from("po_lines").select("line_ref, description, internal_part_no, qty_ordered, qty_received, line_status, unit_price")
+        .eq("po_number", poNumber),
+      db.rpc("arrival_line_blocks", { p_po_number: poNumber }),
+    ]));
+    if (l.error) throw l.error;
+    if (b.error) throw b.error;
+    S.lines = (l.data || []).sort((a, z) => (a.line_ref || "").localeCompare(z.line_ref || "", undefined, { numeric: true }));
+    (b.data || []).forEach(r => { S.blocks[r.line_ref] = r.reason; });
+  } catch (e) { S.lines = []; S.linesErr = "Could not load the PO lines: " + (e.message || e); }
+  render();
+}
+const selected = () => S.lines.filter(l => S.sel[l.line_ref] !== undefined);
+const isShort = (l) => num(S.sel[l.line_ref]) < outstanding(l);
+function anyShort() { return selected().some(isShort); }
+function reasonText() { return S.reason === "Other (see notes)" ? (S.reasonOther.trim() || "") : S.reason; }
+
+function rLines() {
+  if (S.lines === null) return $(header(S.po.po_number, "Loading…", "openPOs()") + `<div class="spin">Loading lines…</div>`);
+  const open = S.lines.filter(l => (l.line_status || "Open") !== "Complete");
+  const rows = open.map(l => {
+    const ref = l.line_ref, on = S.sel[ref] !== undefined, why = S.blocks[ref];
+    return `<div class="card line ${on ? "on" : ""} ${why ? "off" : ""}">
+      <div class="tick" onclick="${why ? "" : `toggle('${esc(ref)}')`}">${on ? "✓" : ""}</div>
+      <div onclick="${why ? "" : `toggle('${esc(ref)}')`}">
+        <div class="ref">${esc(ref)} · ${esc(l.internal_part_no || "—")}</div>
+        <div class="desc">${esc(l.description || "")}</div>
+        <div class="nums">Ordered <b>${num(l.qty_ordered)}</b> · Received <b>${num(l.qty_received)}</b> · Outstanding <b>${outstanding(l)}</b></div>
+        ${why ? `<div class="why">${esc(why)}</div>` : ""}
+      </div>
+      <div>${on ? `<div class="qty">
+          <button onclick="step('${esc(ref)}',-1)">−</button>
+          <input inputmode="numeric" pattern="[0-9]*" value="${esc(S.sel[ref])}" oninput="typeQty('${esc(ref)}',this)" onfocus="this.select()">
+          <button onclick="step('${esc(ref)}',1)">+</button>
+          <button class="all" onclick="setQty('${esc(ref)}',${outstanding(l)})">All ${outstanding(l)}</button></div>
+          <div class="short" id="sh-${esc(ref)}" style="font-size:13px;margin-top:6px;text-align:right">${isShort(l) ? `short ${outstanding(l) - num(S.sel[ref])}` : ""}</div>` : ""}</div>
+    </div>`;
+  }).join("");
+  const done = S.lines.length - open.length;
+  const n = selected().length, short = anyShort();
+  const canReview = n > 0 && S.note.trim() && (!short || reasonText());
+  $(header(S.po.po_number, `${S.po.supplier || ""}${S.po.product ? " · " + S.po.product : ""}`, "openPOs()") + `<main>
+      ${S.linesErr ? `<div class="err">${esc(S.linesErr)}</div>` : ""}
+      <div class="label">1 · Delivery note</div>
+      <input class="field" id="dn" placeholder="Delivery note / reference *" value="${esc(S.note)}"
+             oninput="S.note=this.value;refreshBar()">
+      <div class="label">2 · Tick each line that arrived and enter the quantity</div>
+      ${rows || `<div class="empty">Every line on this PO is already received.</div>`}
+      ${done ? `<div class="sum" style="margin:4px 0 0 4px">${done} line(s) already complete — not shown.</div>` : ""}
+      <div id="shortbox">${short ? shortBox() : ""}</div>
+      <div class="label">Notes (optional)</div>
+      <input class="field" placeholder="Notes" value="${esc(S.notes)}" oninput="S.notes=this.value">
+    </main>
+    <div class="bar"><div class="inner">
+      <span class="sum" id="barsum">${n} line(s) ticked</span>
+      <button class="btn go" id="revbtn" onclick="review()" ${canReview ? "" : "disabled"}>Review booking ›</button>
+    </div></div>`);
+}
+function shortBox() {
+  return `<div class="label">Discrepancy reason — required, the delivery is short</div>
+    <select class="field" onchange="S.reason=this.value;rLines()">
+      <option value="">— choose a reason —</option>
+      ${REASONS.map(r => `<option ${S.reason === r ? "selected" : ""}>${esc(r)}</option>`).join("")}
+    </select>
+    ${S.reason === "Other (see notes)" ? `<input class="field" style="margin-top:10px" placeholder="Type the reason"
+        value="${esc(S.reasonOther)}" oninput="S.reasonOther=this.value;refreshBar()">` : ""}`;
+}
+function refreshBar() {
+  const b = document.getElementById("revbtn"); if (!b) return;
+  const short = anyShort();
+  b.disabled = !(selected().length && S.note.trim() && (!short || reasonText()));
+}
+function toggle(ref) {
+  const l = S.lines.find(x => x.line_ref === ref);
+  if (S.sel[ref] !== undefined) delete S.sel[ref]; else S.sel[ref] = outstanding(l);
+  rLines();
+}
+function setQty(ref, v) {
+  const l = S.lines.find(x => x.line_ref === ref);
+  let q = parseInt(String(v).replace(/[^0-9]/g, ""), 10);
+  if (isNaN(q) || q < 0) q = 0;
+  if (q > outstanding(l)) {
+    q = outstanding(l);
+    S.err = `${ref}: only ${outstanding(l)} outstanding. More than ordered is booked on the laptop (it needs a reason).`;
+    alertMsg(S.err);
+  }
+  S.sel[ref] = q; rLines();
+}
+function step(ref, d) { setQty(ref, num(S.sel[ref]) + d); }
+// typing: keep the value without redrawing the screen, so a tap on
+// "Review booking" straight after typing is never lost
+function typeQty(ref, el) {
+  const l = S.lines.find(x => x.line_ref === ref);
+  let q = parseInt(String(el.value).replace(/[^0-9]/g, ""), 10);
+  if (isNaN(q) || q < 0) q = 0;
+  if (q > outstanding(l)) {
+    q = outstanding(l); el.value = q;
+    alertMsg(`${ref}: only ${outstanding(l)} outstanding. More than ordered is booked on the laptop (it needs a reason).`);
+  }
+  S.sel[ref] = q;
+  const sh = document.getElementById("sh-" + ref);
+  if (sh) sh.textContent = isShort(l) ? `short ${outstanding(l) - q}` : "";
+  const box = document.getElementById("shortbox");
+  if (box) { const want = anyShort(); if (want !== (box.innerHTML.trim() !== "")) box.innerHTML = want ? shortBox() : ""; }
+  refreshBar();
+}
+function alertMsg(m) { document.querySelectorAll(".toast").forEach(x => x.remove());
+  const w = document.createElement("div"); w.className = "warn toast";
+  w.style.cssText = "position:fixed;top:90px;left:50%;transform:translateX(-50%);z-index:50;max-width:90%;box-shadow:0 4px 18px rgba(0,0,0,.2)";
+  w.textContent = m; document.body.appendChild(w); setTimeout(() => w.remove(), 4500); }
+
+// 5. review
+function review() {
+  const zero = selected().filter(l => num(S.sel[l.line_ref]) <= 0).map(l => l.line_ref);
+  if (zero.length) return alertMsg("Qty received must be greater than zero for: " + zero.join(", "));
+  S.ref = newRef(); S.confirmDup = false; S.dupRows = null; S.err = "";
+  S.screen = "review"; render();
+}
+function rReview() {
+  let shortVal = 0;
+  const rows = selected().map(l => {
+    const q = num(S.sel[l.line_ref]), left = outstanding(l) - q;
+    const sv = left > 0 ? left * num(l.unit_price) : 0; shortVal += sv;
+    return `<tr><td><b>${esc(l.line_ref)}</b><br><span class="sum">${esc(l.internal_part_no || "—")}</span></td>
+      <td>${esc(l.description || "")}</td><td style="text-align:right"><b>${q}</b></td>
+      <td>${left <= 0 ? "COMPLETE" : `${left} still outstanding<br><span class="short">short ${left} (R${rand(sv)} excl. VAT)</span>`}</td></tr>`;
+  }).join("");
+  const dup = S.dupRows ? `<div class="warn"><b>⚠ DUPLICATE DELIVERY NOTE</b>
+Delivery note ${esc(S.note.trim())} has already been booked for this part:
+${S.dupRows.map(d => `  ${esc(d.grn_number || "?")}  ${esc(d.part_number || "—")}  ${esc(d.qty ?? "?")} units  ${esc(d.date || "?")}  by ${esc(d.by || "?")}  [${esc(d.line_ref || "no line ref")}]`).join("\n")}
+
+Booking it again will add stock a second time. Only continue if this is genuinely
+a separate physical delivery that happens to share the same note number.
+If you are not certain — go back and check with Stores.</div>` : "";
+  $(header("Confirm arrival", S.po.po_number, S.dupRows ? "" : "S.screen='lines';render()") + `<main>
+      ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
+      ${dup}
+      <div class="card"><table class="rev">
+        <tr><th>Line</th><th>Description</th><th style="text-align:right">Arrived</th><th>After booking</th></tr>${rows}</table></div>
+      <div class="card">
+        <div><b>Delivery note:</b> ${esc(S.note.trim())}</div>
+        ${S.notes.trim() ? `<div style="margin-top:6px"><b>Notes:</b> ${esc(S.notes.trim())}</div>` : ""}
+        ${shortVal > 0 || anyShort() ? `<div class="short" style="margin-top:8px">⚠ SHORT DELIVERY — total variance R${rand(shortVal)} (excl. VAT)<br>
+          Reason: ${esc(reasonText())}. Adjust payment to Finance accordingly.</div>` : ""}
+        <div style="margin-top:10px;color:var(--muted)">Items will be held as “Awaiting QC”. The QC inspector releases them to stock.
+          Lines not ticked stay open — the PO only completes once every line is received.</div>
+      </div></main>
+    <div class="bar"><div class="inner">
+      ${S.dupRows
+        ? `<button class="btn go" onclick="S.dupRows=null;S.screen='lines';render()">Cancel — go back and check</button>
+           <button class="btn amber" onclick="S.confirmDup=true;submit()">Continue anyway</button>`
+        : `<button class="btn sec" onclick="S.screen='lines';render()">Cancel</button>
+           <button class="btn go" onclick="submit()">✓ Confirm arrival</button>`}
+    </div></div>`);
+}
+
+// 6. book — one database call; safe to repeat (same reference = not booked twice)
+async function submit() {
+  S.screen = "busy"; render();
+  const lines = selected().map(l => ({ line_ref: l.line_ref, qty: num(S.sel[l.line_ref]) }));
+  try {
+    const { data, error } = await withTimeout(db.rpc("tablet_book_arrival", {
+      p_username: S.user.username, p_pin: S.pin, p_po_number: S.po.po_number,
+      p_lines: lines, p_delivery_note: S.note.trim(), p_notes: S.notes.trim(),
+      p_short_reason: anyShort() ? reasonText() : "", p_confirm_duplicate: S.confirmDup,
+      p_client_ref: S.ref }), CALL_TIMEOUT * 1.5);
+    if (error) throw error;
+    if (!data.ok) {
+      if (data.need === "confirm_duplicate") { S.dupRows = data.duplicates || []; S.err = ""; S.screen = "review"; return render(); }
+      S.err = data.error || "Not booked."; S.dupRows = null; S.screen = "review"; return render();
+    }
+    S.result = data; S.screen = "done"; render();
+  } catch (e) {
+    S.err = String(e.message || e); S.screen = "unsure"; render();
+  }
+}
+function rBusy() { $(header("Booking…", S.po.po_number) + `<div class="spin">⏳ Booking the arrival — please wait…</div>`); }
+function rUnsure() {
+  $(header("Not confirmed", S.po.po_number) + `<main>
+    <div class="warn"><b>The tablet did not get an answer.</b>
+${esc(S.err)}
+
+The booking may or may not have been saved. Tap “Try again” — if it was already saved
+it will NOT be booked a second time; you will simply see it confirmed.</div>
+    </main><div class="bar"><div class="inner">
+      <button class="btn sec" onclick="S.screen='review';render()">Back</button>
+      <button class="btn go" onclick="submit()">Try again</button></div></div>`);
+}
+function rDone() {
+  const r = S.result, short = r.short;
+  $(header("Arrival booked", S.po.po_number) + `<main><div class="done">
+      <div class="tickbig">✓</div>
+      <h2 style="margin:0 0 8px">${r.po_status === "Complete"
+        ? `PO ${esc(S.po.po_number)} fully COMPLETE`
+        : `PO ${esc(S.po.po_number)} still has outstanding lines`}</h2>
+      <div style="color:var(--muted);font-size:16px">${r.duplicate ? "This booking was already saved — it was not booked twice.<br>" : ""}
+        Booked by ${esc(r.received_by || S.user.username)} · delivery note ${esc(S.note.trim())} · awaiting QC inspection.</div>
+      ${short ? `<div class="warn" style="max-width:640px;margin:20px auto;text-align:left">⚠ Short delivery recorded with reason “${esc(reasonText())}”.
+The discrepancy email to Finance is sent from Book Arrival on a laptop (Report Discrepancy).
+The open balance also shows on Short Deliveries.</div>` : ""}
+    </div></main>
+    <div class="bar"><div class="inner">
+      <button class="btn sec" onclick="logout()">Log out</button>
+      <button class="btn go" onclick="S.poSearch='';openPOs()">Book another delivery</button></div></div>`);
+}
+
+loadUsers();
+</script>
+</body>
+</html>
