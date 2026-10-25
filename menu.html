@@ -7,7 +7,8 @@
 <title>Rippel Matrix — Tablet Menu</title>
 <link rel="manifest" href="manifest.json">
 <!-- ─────────────────────────────────────────────────────────────────────────
-  menu.html — front page on the tablets (v1.0, 25 Oct 2026)
+  menu.html — front page on the tablets (v1.1, 25 Oct 2026)
+  v1.1: logo block removed (white box looked cramped) — title text only.
   Lives in the Blue Card repo (bluecardpwa) next to index.html.
   manifest.json start_url points here, so the tablet icon opens this menu:
     1. Blue Card System  → index.html   (unchanged)
@@ -56,7 +57,6 @@
   .file{ position:absolute; top:6px; right:10px; font-size:9px; color:#4a6a8a; }
   .test{ position:absolute; top:0; left:0; right:0; background:#B71C1C; text-align:center;
     font-size:13px; font-weight:700; padding:5px; }
-  .logo{ height:64px; margin-bottom:14px; }
   .brand{ color:#4a9eff; font-size:11px; font-weight:700; letter-spacing:.2em; }
   h1{ margin:6px 0 2px; font-size:30px; font-weight:800; letter-spacing:.06em; }
   h1 span{ color:#C9A227; }
@@ -78,9 +78,8 @@
 </head>
 <body>
 <div class="wrap">
-  <span class="file">menu.html v1.0</span>
+  <span class="file">menu.html v1.1</span>
   <div class="test" id="testbar" hidden>⚠ TEST MODE — Goods Receiving uses the TEST database</div>
-  <img class="logo" id="logo" alt="" hidden>
   <div class="brand">RIPPEL EFFECT SYSTEMS</div>
   <h1>RIPPEL <span>MATRIX</span></h1>
   <div class="sub">Integrated Manufacturing &amp; Production Management System · Floor tablet</div>
@@ -104,7 +103,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="js/supabase.js?v=1.22"></script>
 <script src="js/sitegate.js?v=1.22"></script>
-<script src="js/logo.js?v=1.22"></script>
 <script>
   (function () {
     // carry ?env=test through to Goods Receiving (Blue Card is LIVE only)
@@ -112,12 +110,6 @@
       document.getElementById('go-receiving').href = 'receiving.html?env=test';
       document.getElementById('testbar').hidden = false;
     }
-    try {
-      if (typeof RIPPEL_LOGO !== 'undefined') {
-        var img = document.getElementById('logo');
-        img.src = RIPPEL_LOGO; img.hidden = false;
-      }
-    } catch (e) { /* no logo — the menu still works */ }
   })();
 </script>
 </body>
