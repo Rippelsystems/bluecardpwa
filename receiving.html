@@ -5,8 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Rippel Matrix — Book Arrival</title>
 <!-- ─────────────────────────────────────────────────────────────────────────
-  receiving.html — Book Arrival on the tablet (v1.1, 25 Oct 2026)
+  receiving.html — Book Arrival on the tablet (v1.2, 26 Oct 2026)
   v1.1: "‹ Menu" on the first screen returns to menu.html (the tablet front page).
+  v1.2: PRICE COMPARE — per ticked line the price per unit (excl. VAT) on the
+        delivery note / invoice can be typed next to the quantity; the PO price
+        is shown beside it and a difference is flagged at once. On confirm the
+        price is saved as the actual price (component_pricing, stock item — as
+        the laptop does with an Invoice Total) and a difference is parked in
+        po_price_variances with a note on the delivery, to be handled on the
+        laptop. Needs tablet_price_compare_26Oct.sql.
   Lives in the Blue Card repo (bluecardpwa) next to index.html, behind the
   same site password. Books normal component deliveries through ONE database
   function (tablet_book_arrival — run tablet_book_arrival_25Oct.sql first).
@@ -128,6 +135,13 @@
   .qty input{ width:96px; height:52px; font-size:22px; font-weight:700; text-align:center;
     border:2px solid var(--border); border-radius:10px; }
   .qty .all{ width:auto; padding:0 12px; font-size:13px; }
+  .price{ display:flex; align-items:center; gap:8px; justify-content:flex-end; margin-top:8px; }
+  .price .lbl{ font-size:12px; color:var(--muted); text-align:right; line-height:1.2; }
+  .price input{ width:118px; height:46px; font-size:18px; font-weight:700; text-align:right;
+    border:2px solid var(--border); border-radius:10px; padding-right:8px; }
+  .price input.diff{ border-color:var(--red); background:#FDECEA; }
+  .pvar{ font-size:13px; font-weight:700; color:var(--red); text-align:right; margin-top:4px; }
+  .pok{ font-size:13px; font-weight:700; color:var(--green); text-align:right; margin-top:4px; }
   .field{ width:100%; font-size:18px; padding:14px 16px; border:1px solid var(--border);
     border-radius:10px; }
   select.field{ background:#fff; }
@@ -164,7 +178,7 @@
 "use strict";
 // ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
 // LIVE = the Blue Card connection (js/supabase.js). ?env=test = TEST database.
-const RCV_VERSION = "1.1";
+const RCV_VERSION = "1.2";
 const RCV_TEST = /(^|[?&])env=test(&|$)/i.test(location.search);
 const RCV_TEST_URL = "https://wtkbsvopuvtxiprjtqqx.supabase.co";
 const RCV_TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0a2Jzdm9wdXZ0eGlwcmp0cXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTUzNjIsImV4cCI6MjA5NjE3MTM2Mn0.q3cRrSbgmgzaw9PzHEuXaic-3Cl-JAiAPVbZnyoY8SQ";
@@ -190,7 +204,7 @@ const S = {
   screen: "names",            // names | pin | pos | lines | review | busy | unsure | done
   users: [], user: null, pin: "", pinErr: "",
   pos: [], poSearch: "", posErr: "",
-  po: null, lines: [], blocks: {}, sel: {}, linesErr: "",
+  po: null, lines: [], blocks: {}, sel: {}, price: {}, linesErr: "",
   note: "", notes: "", reason: "", reasonOther: "",
   ref: null, confirmDup: false, dupRows: null, result: null, err: "",
 };
@@ -349,7 +363,7 @@ function drawPOList() { const box = document.getElementById("polist"); if (box) 
 // 4. the PO's lines
 async function openPO(poNumber) {
   S.po = (S.pos || []).find(p => p.po_number === poNumber) || { po_number: poNumber };
-  S.screen = "lines"; S.lines = null; S.blocks = {}; S.sel = {}; S.linesErr = "";
+  S.screen = "lines"; S.lines = null; S.blocks = {}; S.sel = {}; S.price = {}; S.linesErr = "";
   S.note = ""; S.notes = ""; S.reason = ""; S.reasonOther = ""; S.err = "";
   render();
   try {
@@ -366,6 +380,21 @@ async function openPO(poNumber) {
   render();
 }
 const selected = () => S.lines.filter(l => S.sel[l.line_ref] !== undefined);
+// v1.2 — price on the note (per unit, excl. VAT). "" = not captured.
+const priceOf  = (ref) => { const t = String(S.price[ref] ?? "").trim().replace(",", "."); return t === "" ? null : Number(t); };
+const priceBad = (ref) => { const p = priceOf(ref); return p !== null && (isNaN(p) || p < 0); };
+const priceDiff = (l) => { const p = priceOf(l.line_ref); if (p === null || isNaN(p)) return null;
+  const d = p - num(l.unit_price); return Math.abs(d) > 0.01 ? d : 0; };
+const anyPriceBad = () => selected().some(l => priceBad(l.line_ref));
+function priceLineHTML(l) {
+  const ref = l.line_ref, d = priceDiff(l), p = priceOf(ref);
+  if (p === null) return `<div class="pok" style="color:var(--muted);font-weight:400">PO price R${rand(l.unit_price)} — no price typed</div>`;
+  if (isNaN(p) || p < 0) return `<div class="pvar">Enter the price as a number</div>`;
+  if (d === 0) return `<div class="pok">✓ matches PO price R${rand(l.unit_price)}</div>`;
+  const pct = num(l.unit_price) > 0 ? ` (${d > 0 ? "+" : ""}${(d / num(l.unit_price) * 100).toFixed(1)}%)` : "";
+  return `<div class="pvar">⚠ ${d > 0 ? "OVER" : "UNDER"} PO price R${rand(l.unit_price)} by R${rand(Math.abs(d))}/unit${pct}
+    — R${rand(Math.abs(d) * num(S.sel[ref]))} on ${num(S.sel[ref])} units</div>`;
+}
 const isShort = (l) => num(S.sel[l.line_ref]) < outstanding(l);
 function anyShort() { return selected().some(isShort); }
 function reasonText() { return S.reason === "Other (see notes)" ? (S.reasonOther.trim() || "") : S.reason; }
@@ -388,18 +417,22 @@ function rLines() {
           <input inputmode="numeric" pattern="[0-9]*" value="${esc(S.sel[ref])}" oninput="typeQty('${esc(ref)}',this)" onfocus="this.select()">
           <button onclick="step('${esc(ref)}',1)">+</button>
           <button class="all" onclick="setQty('${esc(ref)}',${outstanding(l)})">All ${outstanding(l)}</button></div>
-          <div class="short" id="sh-${esc(ref)}" style="font-size:13px;margin-top:6px;text-align:right">${isShort(l) ? `short ${outstanding(l) - num(S.sel[ref])}` : ""}</div>` : ""}</div>
+          <div class="short" id="sh-${esc(ref)}" style="font-size:13px;margin-top:6px;text-align:right">${isShort(l) ? `short ${outstanding(l) - num(S.sel[ref])}` : ""}</div>
+          <div class="price"><div class="lbl">Price on note<br>R / unit excl. VAT</div>
+            <input inputmode="decimal" placeholder="${esc(rand(l.unit_price))}" class="${priceDiff(l) ? "diff" : ""}"
+                   value="${esc(S.price[ref] ?? "")}" oninput="typePrice('${esc(ref)}',this)" onfocus="this.select()"></div>
+          <div id="pv-${esc(ref)}">${priceLineHTML(l)}</div>` : ""}</div>
     </div>`;
   }).join("");
   const done = S.lines.length - open.length;
   const n = selected().length, short = anyShort();
-  const canReview = n > 0 && S.note.trim() && (!short || reasonText());
+  const canReview = n > 0 && S.note.trim() && (!short || reasonText()) && !anyPriceBad();
   $(header(S.po.po_number, `${S.po.supplier || ""}${S.po.product ? " · " + S.po.product : ""}`, "openPOs()") + `<main>
       ${S.linesErr ? `<div class="err">${esc(S.linesErr)}</div>` : ""}
       <div class="label">1 · Delivery note</div>
       <input class="field" id="dn" placeholder="Delivery note / reference *" value="${esc(S.note)}"
              oninput="S.note=this.value;refreshBar()">
-      <div class="label">2 · Tick each line that arrived and enter the quantity</div>
+      <div class="label">2 · Tick each line that arrived, enter the quantity — and the price on the note if it shows one</div>
       ${rows || `<div class="empty">Every line on this PO is already received.</div>`}
       ${done ? `<div class="sum" style="margin:4px 0 0 4px">${done} line(s) already complete — not shown.</div>` : ""}
       <div id="shortbox">${short ? shortBox() : ""}</div>
@@ -423,7 +456,7 @@ function shortBox() {
 function refreshBar() {
   const b = document.getElementById("revbtn"); if (!b) return;
   const short = anyShort();
-  b.disabled = !(selected().length && S.note.trim() && (!short || reasonText()));
+  b.disabled = !(selected().length && S.note.trim() && (!short || reasonText()) && !anyPriceBad());
 }
 function toggle(ref) {
   const l = S.lines.find(x => x.line_ref === ref);
@@ -455,8 +488,18 @@ function typeQty(ref, el) {
   S.sel[ref] = q;
   const sh = document.getElementById("sh-" + ref);
   if (sh) sh.textContent = isShort(l) ? `short ${outstanding(l) - q}` : "";
+  const pv = document.getElementById("pv-" + ref);
+  if (pv) pv.innerHTML = priceLineHTML(l);
   const box = document.getElementById("shortbox");
   if (box) { const want = anyShort(); if (want !== (box.innerHTML.trim() !== "")) box.innerHTML = want ? shortBox() : ""; }
+  refreshBar();
+}
+function typePrice(ref, el) {
+  S.price[ref] = el.value;
+  const l = S.lines.find(x => x.line_ref === ref);
+  el.classList.toggle("diff", !!priceDiff(l));
+  const pv = document.getElementById("pv-" + ref);
+  if (pv) pv.innerHTML = priceLineHTML(l);
   refreshBar();
 }
 function alertMsg(m) { document.querySelectorAll(".toast").forEach(x => x.remove());
@@ -472,12 +515,18 @@ function review() {
   S.screen = "review"; render();
 }
 function rReview() {
-  let shortVal = 0;
+  let shortVal = 0, varVal = 0, nVar = 0;
   const rows = selected().map(l => {
     const q = num(S.sel[l.line_ref]), left = outstanding(l) - q;
     const sv = left > 0 ? left * num(l.unit_price) : 0; shortVal += sv;
+    const p = priceOf(l.line_ref), d = priceDiff(l);
+    if (d) { varVal += d * q; nVar++; }
+    const priceCell = p === null ? `<span class="sum">PO R${rand(l.unit_price)}<br>no price typed</span>`
+      : d ? `<span class="short" style="color:var(--red)">R${rand(p)} vs PO R${rand(l.unit_price)}<br>${d > 0 ? "+" : "−"}R${rand(Math.abs(d))}/unit · R${rand(Math.abs(d) * q)}</span>`
+      : `R${rand(p)}<br><span class="sum">= PO price</span>`;
     return `<tr><td><b>${esc(l.line_ref)}</b><br><span class="sum">${esc(l.internal_part_no || "—")}</span></td>
       <td>${esc(l.description || "")}</td><td style="text-align:right"><b>${q}</b></td>
+      <td style="text-align:right">${priceCell}</td>
       <td>${left <= 0 ? "COMPLETE" : `${left} still outstanding<br><span class="short">short ${left} (R${rand(sv)} excl. VAT)</span>`}</td></tr>`;
   }).join("");
   const dup = S.dupRows ? `<div class="warn"><b>⚠ DUPLICATE DELIVERY NOTE</b>
@@ -491,12 +540,14 @@ If you are not certain — go back and check with Stores.</div>` : "";
       ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
       ${dup}
       <div class="card"><table class="rev">
-        <tr><th>Line</th><th>Description</th><th style="text-align:right">Arrived</th><th>After booking</th></tr>${rows}</table></div>
+        <tr><th>Line</th><th>Description</th><th style="text-align:right">Arrived</th><th style="text-align:right">Price / unit</th><th>After booking</th></tr>${rows}</table></div>
       <div class="card">
         <div><b>Delivery note:</b> ${esc(S.note.trim())}</div>
         ${S.notes.trim() ? `<div style="margin-top:6px"><b>Notes:</b> ${esc(S.notes.trim())}</div>` : ""}
         ${shortVal > 0 || anyShort() ? `<div class="short" style="margin-top:8px">⚠ SHORT DELIVERY — total variance R${rand(shortVal)} (excl. VAT)<br>
           Reason: ${esc(reasonText())}. Adjust payment to Finance accordingly.</div>` : ""}
+        ${nVar ? `<div class="short" style="margin-top:8px;color:var(--red)">⚠ PRICE DIFFERENCE on ${nVar} line(s) — ${varVal >= 0 ? "over" : "under"}charged R${rand(Math.abs(varVal))} (excl. VAT) on this delivery.<br>
+          The price on the note is saved as the price paid; the difference is noted on the PO line and must be handled on the laptop.</div>` : ""}
         <div style="margin-top:10px;color:var(--muted)">Items will be held as “Awaiting QC”. The QC inspector releases them to stock.
           Lines not ticked stay open — the PO only completes once every line is received.</div>
       </div></main>
@@ -512,7 +563,12 @@ If you are not certain — go back and check with Stores.</div>` : "";
 // 6. book — one database call; safe to repeat (same reference = not booked twice)
 async function submit() {
   S.screen = "busy"; render();
-  const lines = selected().map(l => ({ line_ref: l.line_ref, qty: num(S.sel[l.line_ref]) }));
+  const lines = selected().map(l => {
+    const o = { line_ref: l.line_ref, qty: num(S.sel[l.line_ref]) };
+    const p = priceOf(l.line_ref);
+    if (p !== null && !isNaN(p) && p >= 0) o.unit_price = p;      // v1.2: price on the note
+    return o;
+  });
   try {
     const { data, error } = await withTimeout(db.rpc("tablet_book_arrival", {
       p_username: S.user.username, p_pin: S.pin, p_po_number: S.po.po_number,
@@ -550,6 +606,9 @@ function rDone() {
         : `PO ${esc(S.po.po_number)} still has outstanding lines`}</h2>
       <div style="color:var(--muted);font-size:16px">${r.duplicate ? "This booking was already saved — it was not booked twice.<br>" : ""}
         Booked by ${esc(r.received_by || S.user.username)} · delivery note ${esc(S.note.trim())} · awaiting QC inspection.</div>
+      ${(r.price_variances || []).length ? `<div class="err" style="max-width:640px;margin:20px auto;text-align:left"><b>⚠ PRICE DIFFERENCE flagged for the laptop</b>
+${r.price_variances.map(v => `${esc(v.line_ref)} · ${esc(v.part_no || "")}: note R${rand(v.invoice_unit_price)} vs PO R${rand(v.po_unit_price)} (${num(v.variance_per_unit) > 0 ? "+" : ""}${rand(v.variance_per_unit)}/unit${v.variance_pct != null ? ", " + (num(v.variance_pct) > 0 ? "+" : "") + num(v.variance_pct).toFixed(1) + "%" : ""}) — R${rand(v.variance_value)} on this delivery`).join("\n")}
+The difference is noted on the delivery and parked as an open price variance. It is handled on the laptop; the receiving itself is done.</div>` : ""}
       ${short ? `<div class="warn" style="max-width:640px;margin:20px auto;text-align:left">⚠ Short delivery recorded with reason “${esc(reasonText())}”.
 The discrepancy email to Finance is sent from Book Arrival on a laptop (Report Discrepancy).
 The open balance also shows on Short Deliveries.</div>` : ""}
