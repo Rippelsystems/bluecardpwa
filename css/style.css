@@ -375,17 +375,23 @@ textarea { resize: vertical; min-height: 72px; }
 }
 
 /* ─── TOAST ───────────────────────────────────────────────────────────────── */
+/* v1.24 (28/10/2026): the toast used to sit 80px from the bottom — on top of
+   the green action button and the bar, and operators were tapping it instead
+   of the button. It now drops in from the TOP (under the sticky top bar),
+   lets taps pass straight through it, and fades out. */
 #toast {
-  position: fixed; bottom: 80px; left: 50%;
-  transform: translateX(-50%) translateY(80px);
+  position: fixed; top: 58px; left: 50%;
+  transform: translateX(-50%) translateY(-24px);
+  opacity: 0; pointer-events: none;
   background: #1a2236; color: #fff;
   padding: 11px 20px; border-radius: 8px;
   font-size: 13px; font-weight: 600;
-  white-space: nowrap; transition: transform 0.25s ease;
+  white-space: normal; transition: transform 0.25s ease, opacity 0.35s ease;
   z-index: 999; border: 1px solid #2a3550;
   max-width: 90vw; text-align: center;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
 }
-#toast.visible { transform: translateX(-50%) translateY(0); }
+#toast.visible { transform: translateX(-50%) translateY(0); opacity: 1; }
 #toast.ok    { border-color: var(--pass); }
 #toast.error { border-color: var(--fail); }
 #toast.warn  { border-color: var(--warn); }
