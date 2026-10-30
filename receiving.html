@@ -14,6 +14,12 @@
         the laptop does with an Invoice Total) and a difference is parked in
         po_price_variances with a note on the delivery, to be handled on the
         laptop. Needs tablet_price_compare_26Oct.sql.
+  v1.3 (30 Oct 2026): DOLLAR / IMPORT POs — on a PO that is not in Rand
+        (supplier_po.currency USD …) the price box is not shown: the delivery
+        note price is in dollars and Finance handles it (the database refuses
+        a price on such a PO too — tablet_no_price_import_30Oct.sql). The PO
+        shows a "USD" badge. A shipping cost line (po_lines.is_shipping) is
+        not listed to tick — it closes by itself when the goods are complete.
   Lives in the Blue Card repo (bluecardpwa) next to index.html, behind the
   same site password. Books normal component deliveries through ONE database
   function (tablet_book_arrival — run tablet_book_arrival_25Oct.sql first).
@@ -178,7 +184,7 @@
 "use strict";
 // ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
 // LIVE = the Blue Card connection (js/supabase.js). ?env=test = TEST database.
-const RCV_VERSION = "1.2";
+const RCV_VERSION = "1.3";
 const RCV_TEST = /(^|[?&])env=test(&|$)/i.test(location.search);
 const RCV_TEST_URL = "https://wtkbsvopuvtxiprjtqqx.supabase.co";
 const RCV_TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0a2Jzdm9wdXZ0eGlwcmp0cXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTUzNjIsImV4cCI6MjA5NjE3MTM2Mn0.q3cRrSbgmgzaw9PzHEuXaic-3Cl-JAiAPVbZnyoY8SQ";
@@ -327,7 +333,7 @@ async function openPOs() {
   S.screen = "pos"; S.pos = null; S.posErr = ""; render();
   try {
     const { data, error } = await withTimeout(db.from("supplier_po")
-      .select("po_number, supplier, product, po_type, status, date_ordered")
+      .select("po_number, supplier, product, po_type, status, date_ordered, currency")
       .in("status", ["Open", "Backorder"]).order("date_ordered", { ascending: false }).limit(2000));
     if (error) throw error;
     S.pos = (data || []).filter(p => !/raw material/i.test(p.po_type || ""));
@@ -345,6 +351,7 @@ function poListHTML() {
         <div class="grow"><div class="num">${esc(p.po_number)}</div>
           <div class="sup">${esc(p.supplier || "")} · ordered ${esc((p.date_ordered || "").slice(0, 10))}</div></div>
         ${p.product ? `<span class="badge b-prod">${esc(p.product)}</span>` : ""}
+        ${isForeign(p) ? `<span class="badge" style="background:#00695C">${esc(p.currency)}</span>` : ""}
         <span class="badge ${p.status === "Backorder" ? "b-back" : "b-open"}">${esc(p.status)}</span>
       </div>`).join("")
     + (list.length > 150 ? `<div class="empty">${list.length - 150} more — type more of the PO number</div>` : "");
@@ -368,7 +375,7 @@ async function openPO(poNumber) {
   render();
   try {
     const [l, b] = await withTimeout(Promise.all([
-      db.from("po_lines").select("line_ref, description, internal_part_no, qty_ordered, qty_received, line_status, unit_price")
+      db.from("po_lines").select("line_ref, description, internal_part_no, qty_ordered, qty_received, line_status, unit_price, is_shipping")
         .eq("po_number", poNumber),
       db.rpc("arrival_line_blocks", { p_po_number: poNumber }),
     ]));
@@ -380,6 +387,9 @@ async function openPO(poNumber) {
   render();
 }
 const selected = () => S.lines.filter(l => S.sel[l.line_ref] !== undefined);
+// v1.3 — a PO not in Rand: no price on the tablet
+const isForeign = (p) => !!(p && p.currency && p.currency !== "ZAR");
+const foreignPO = () => isForeign(S.po);
 // v1.2 — price on the note (per unit, excl. VAT). "" = not captured.
 const priceOf  = (ref) => { const t = String(S.price[ref] ?? "").trim().replace(",", "."); return t === "" ? null : Number(t); };
 const priceBad = (ref) => { const p = priceOf(ref); return p !== null && (isNaN(p) || p < 0); };
@@ -401,7 +411,9 @@ function reasonText() { return S.reason === "Other (see notes)" ? (S.reasonOther
 
 function rLines() {
   if (S.lines === null) return $(header(S.po.po_number, "Loading…", "openPOs()") + `<div class="spin">Loading lines…</div>`);
-  const open = S.lines.filter(l => (l.line_status || "Open") !== "Complete");
+  // v1.3: the shipping cost line is never ticked — it closes with the goods
+  const ship = S.lines.filter(l => l.is_shipping && (l.line_status || "Open") !== "Complete");
+  const open = S.lines.filter(l => (l.line_status || "Open") !== "Complete" && !l.is_shipping);
   const rows = open.map(l => {
     const ref = l.line_ref, on = S.sel[ref] !== undefined, why = S.blocks[ref];
     return `<div class="card line ${on ? "on" : ""} ${why ? "off" : ""}">
@@ -418,10 +430,12 @@ function rLines() {
           <button onclick="step('${esc(ref)}',1)">+</button>
           <button class="all" onclick="setQty('${esc(ref)}',${outstanding(l)})">All ${outstanding(l)}</button></div>
           <div class="short" id="sh-${esc(ref)}" style="font-size:13px;margin-top:6px;text-align:right">${isShort(l) ? `short ${outstanding(l) - num(S.sel[ref])}` : ""}</div>
-          <div class="price"><div class="lbl">Price on note<br>R / unit excl. VAT</div>
+          ${foreignPO()
+            ? `<div class="pok" style="color:var(--muted);font-weight:600;margin-top:8px">${esc(S.po.currency)} PO — no price here (Finance)</div>`
+            : `<div class="price"><div class="lbl">Price on note<br>R / unit excl. VAT</div>
             <input inputmode="decimal" placeholder="${esc(rand(l.unit_price))}" class="${priceDiff(l) ? "diff" : ""}"
                    value="${esc(S.price[ref] ?? "")}" oninput="typePrice('${esc(ref)}',this)" onfocus="this.select()"></div>
-          <div id="pv-${esc(ref)}">${priceLineHTML(l)}</div>` : ""}</div>
+          <div id="pv-${esc(ref)}">${priceLineHTML(l)}</div>`}` : ""}</div>
     </div>`;
   }).join("");
   const done = S.lines.length - open.length;
@@ -432,8 +446,11 @@ function rLines() {
       <div class="label">1 · Delivery note</div>
       <input class="field" id="dn" placeholder="Delivery note / reference *" value="${esc(S.note)}"
              oninput="S.note=this.value;refreshBar()">
-      <div class="label">2 · Tick each line that arrived, enter the quantity — and the price on the note if it shows one</div>
+      ${foreignPO() ? `<div class="info">This PO is in ${esc(S.po.currency)} (import). Tick the lines and quantities only —
+        the price on the note is in ${esc(S.po.currency)} and is handled by Finance.</div>` : ""}
+      <div class="label">2 · Tick each line that arrived, enter the quantity${foreignPO() ? "" : " — and the price on the note if it shows one"}</div>
       ${rows || `<div class="empty">Every line on this PO is already received.</div>`}
+      ${ship.length ? `<div class="sum" style="margin:4px 0 0 4px">🚢 ${ship.map(l => esc(l.description || l.line_ref)).join(", ")} — shipping cost, not ticked: it closes by itself when all the goods are complete.</div>` : ""}
       ${done ? `<div class="sum" style="margin:4px 0 0 4px">${done} line(s) already complete — not shown.</div>` : ""}
       <div id="shortbox">${short ? shortBox() : ""}</div>
       <div class="label">Notes (optional)</div>
@@ -521,7 +538,8 @@ function rReview() {
     const sv = left > 0 ? left * num(l.unit_price) : 0; shortVal += sv;
     const p = priceOf(l.line_ref), d = priceDiff(l);
     if (d) { varVal += d * q; nVar++; }
-    const priceCell = p === null ? `<span class="sum">PO R${rand(l.unit_price)}<br>no price typed</span>`
+    const priceCell = foreignPO() ? `<span class="sum">${esc(S.po.currency)} PO<br>Finance</span>`
+      : p === null ? `<span class="sum">PO R${rand(l.unit_price)}<br>no price typed</span>`
       : d ? `<span class="short" style="color:var(--red)">R${rand(p)} vs PO R${rand(l.unit_price)}<br>${d > 0 ? "+" : "−"}R${rand(Math.abs(d))}/unit · R${rand(Math.abs(d) * q)}</span>`
       : `R${rand(p)}<br><span class="sum">= PO price</span>`;
     return `<tr><td><b>${esc(l.line_ref)}</b><br><span class="sum">${esc(l.internal_part_no || "—")}</span></td>
@@ -565,7 +583,7 @@ async function submit() {
   S.screen = "busy"; render();
   const lines = selected().map(l => {
     const o = { line_ref: l.line_ref, qty: num(S.sel[l.line_ref]) };
-    const p = priceOf(l.line_ref);
+    const p = foreignPO() ? null : priceOf(l.line_ref);          // v1.3: never on a non-Rand PO
     if (p !== null && !isNaN(p) && p >= 0) o.unit_price = p;      // v1.2: price on the note
     return o;
   });
