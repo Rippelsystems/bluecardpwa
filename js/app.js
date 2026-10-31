@@ -212,12 +212,16 @@ async function loadResumeScreen() {
     // a shared factory-floor tool must not hide other operators' in-progress
     // work, or someone can end up starting a duplicate for the same
     // trolley/position without ever knowing a card already exists.
-    const {data}=await supabaseClient.from('weapon_builds')
+    // v1.26 (31/10/2026): ... but only cards of the card type the operator is
+    // logged in with. A duplicate can only ever be of the same type, and the
+    // newest-20 limit was letting a busy RLL run push GRN40 cards off the list.
+    let q=supabaseClient.from('weapon_builds')
       .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,created_at,status,card_type,checks,operator_number')
-      .neq('status','COMPLETE')
-      .order('created_at',{ascending:false}).limit(20);
+      .neq('status','COMPLETE');
+    if (state.cardType) q=q.eq('card_type',state.cardType);
+    const {data}=await q.order('created_at',{ascending:false}).limit(20);
     if (!data||data.length===0) {
-      listEl.innerHTML='<div class="loading-msg">No incomplete cards — start a new one below</div>';
+      listEl.innerHTML=`<div class="loading-msg">No incomplete ${state.cardType||''} cards — start a new one below</div>`;
     } else {
       listEl.innerHTML=data.map(r=>{
         const st=(r.status||'IN PROGRESS').toUpperCase();
