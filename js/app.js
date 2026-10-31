@@ -29,6 +29,10 @@ function show(screenId) {
   if (nav) nav.classList.toggle('hidden', hideNav);
   const swBtn = document.getElementById('switch-op-btn');
   if (swBtn) swBtn.style.display = hideNav ? 'none' : 'block';
+  // v1.25 (31/10/2026): for GRN40 the FAT stage is the RES-QC-16 Final
+  // Acceptance Checklist, so the bar tab says so (it is not the build card).
+  const fatLbl = document.getElementById('nav-fat-label');
+  if (fatLbl) fatLbl.textContent = (state.cardType === 'GRN40') ? 'Acceptance' : 'FAT';
 }
 
 function showSection(id) {
