@@ -15,6 +15,10 @@ const fatpdi = {
   units: [],        // eligible units currently LOADED (paged, not the whole contract)
   results: {},      // results[unitSerial][itemId] = 'PASS'|'FAIL'|null
   remarks: {},      // remarks[unitSerial] = text
+  accept: {},       // acceptance stage only (GRN40 FAT = RES-QC-16): accept[unitSerial] = 'YES'|'NO'   (31/10/2026)
+  notes: {},        // acceptance stage only: notes[unitSerial] = text
+  saved: {},        // acceptance stage only: saved[unitSerial] = {accepted, by, at} from the database
+  touched: {},      // acceptance stage only: touched[unitSerial] = true once the operator changed anything on that row
   docCode: null,
   adminPreview: false,  // true = Admin bypassed the COMPLETE gate to review layout;
                         // preview data is never saved to the real QC tables
@@ -38,6 +42,12 @@ function _withTimeout(promise, ms, label) {
 function _fatpdiTable() {
   return fatpdi.stage === 'FAT' ? 'weapon_fat_results' : 'weapon_pdi_results';
 }
+// 31/10/2026: a stage flagged `acceptance: true` in fatpdi_config.js (the GRN40
+// FAT = RES-QC-16 Final Acceptance) carries the paper form's extra fields —
+// Country, ACCEPT YES/NO, Notes — and lists its units from the SERIAL
+// REGISTER instead of from Blue Card build cards. Same stage, same table.
+function _stageCfg() { return (FATPDI_TYPES[fatpdi.cardType] || {})[fatpdi.stage] || null; }
+function _isAcc() { const c = _stageCfg(); return !!(c && c.acceptance); }
 
 // ── Open from the bottom bar (v1.22) — for the card type the operator is
 //    logged in with. Before, FAT and PDI were two blocks at the foot of the
@@ -45,6 +55,9 @@ function _fatpdiTable() {
 function openFatPdiTab(stage) {
   if (!state.operator) { showToast('Log in first', 'error'); return; }
   if (!state.cardType) { showToast('No card type — log in again and pick one', 'error'); return; }
+  if (!(FATPDI_TYPES[state.cardType] || {})[stage]) {
+    showToast(`${stage} is not set up for ${state.cardType}`, 'error'); return;
+  }
   // Already on this stage — just go back to it, keep what is loaded
   if (fatpdi.stage === stage && fatpdi.cardType === state.cardType &&
       document.getElementById('screen-fatpdi').classList.contains('active')) return;
@@ -75,10 +88,20 @@ function openFatPdi(stage, cardType) {
   fatpdi.docCode = stageCfg.docCode;
   fatpdi.results = {};
   fatpdi.remarks = {};
+  fatpdi.accept = {};
+  fatpdi.notes = {};
+  fatpdi.saved = {};
+  fatpdi.touched = {};
   fatpdi.units = [];
 
-  document.getElementById('fatpdi-stage-badge').textContent = stage;
-  document.getElementById('fatpdi-title').textContent = `${stage} — ${typeCfg.label}`;
+  // 31/10/2026: an acceptance stage is named for what it is — the GRN40
+  // "Final Acceptance Checklist" — not "FAT", so it is not confused with the
+  // GRN40 build card.
+  document.getElementById('fatpdi-stage-badge').textContent = stageCfg.acceptance ? 'ACCEPT' : stage;
+  document.getElementById('fatpdi-title').textContent =
+    stageCfg.acceptance ? `${stageCfg.title || 'Final Acceptance Checklist'} — ${typeCfg.label}` : `${stage} — ${typeCfg.label}`;
+  const unitsHeading = document.getElementById('fatpdi-units-heading');
+  if (unitsHeading) unitsHeading.textContent = stageCfg.acceptance ? 'Sights for Final Acceptance' : 'Units Ready for Inspection';
   document.getElementById('fatpdi-op').textContent = state.operator || '—';
   const searchInp = document.getElementById('fatpdi-filter-search');
   if (searchInp) searchInp.value = '';
@@ -96,10 +119,15 @@ async function _loadFatPdiContracts() {
   if (!sel) return;
   sel.innerHTML = '<option value="">All Contracts</option>';
   try {
-    const { data } = await _withTimeout(supabaseClient.from('weapon_builds')
-      .select('contract_name').eq('card_type', fatpdi.cardType)
-      .not('contract_name', 'is', null), 15000, 'Contract list');
-    const names = [...new Set((data || []).map(r => r.contract_name))].sort();
+    // 31/10/2026: Final Acceptance lists the SERIAL REGISTER's contracts
+    const { data } = _isAcc()
+      ? await _withTimeout(supabaseClient.from('weapon_serials')
+          .select('project').eq('card_type', fatpdi.cardType)
+          .not('project', 'is', null), 15000, 'Contract list')
+      : await _withTimeout(supabaseClient.from('weapon_builds')
+          .select('contract_name').eq('card_type', fatpdi.cardType)
+          .not('contract_name', 'is', null), 15000, 'Contract list');
+    const names = [...new Set((data || []).map(r => _isAcc() ? r.project : r.contract_name))].sort();
     names.forEach(n => { sel.innerHTML += `<option value="${n}">${n}</option>`; });
   } catch (e) {
     console.warn('[FAT/PDI] Could not load contracts', e);
@@ -182,6 +210,7 @@ async function _loadFatPdiUnits(reset) {
   if (loadMoreBtn) { loadMoreBtn.disabled = true; loadMoreBtn.textContent = 'Loading…'; }
 
   try {
+    if (_isAcc()) { await _loadAcceptanceUnits(reset, { grid, emptyMsg, footer, countLabel, loadMoreBtn }); return; }
     const serialCol = fatpdi.cardType === 'GRN40' ? 'sight_serial' : 'launcher_serial';
     // 23/10/2026 (v1.22): no more count='exact' — that made PostgREST run a
     // second counting query over the table on every page; the page itself
@@ -285,6 +314,102 @@ async function _loadFatPdiUnits(reset) {
   }
 }
 
+// ── 31/10/2026: GRN40 FINAL ACCEPTANCE (the GRN40 FAT tab, RES-QC-16) ────
+// Units from the SERIAL REGISTER: GRN40 sights never get a Blue Card build
+// card, so the rows are the sights allocated in weapon_serials for this card
+// type (the same register the Blue Card checks a serial against). Only a
+// registered sight can be accepted (database trigger), and weapon_fat_results
+// holds ONE result per sight per action (existing unique key) — the same
+// duplicate rule the launcher / sight serials already follow.
+async function _loadAcceptanceUnits(reset, el) {
+  const { emptyMsg, footer, countLabel, loadMoreBtn } = el;
+  let q = supabaseClient.from('weapon_serials')
+    .select('serial_number,project,customer,status,trolley_number,trolley_position')
+    .eq('card_type', fatpdi.cardType);
+  if (fatpdi.filterContract) q = q.eq('project', fatpdi.filterContract);
+  if (fatpdi.filterSearch) q = q.ilike('serial_number', `%${fatpdi.filterSearch}%`);
+  q = q.order('serial_number').range(fatpdi.offset, fatpdi.offset + FATPDI_PAGE_SIZE - 1);
+
+  const { data, error } = await _withTimeout(q, 20000, 'Loading sights from the serial register');
+  if (error) throw error;
+  const pageFull = (data || []).length >= FATPDI_PAGE_SIZE;
+  const pageUnits = (data || []).map(r => ({
+    openFails: 0,
+    unitSerial: r.serial_number,
+    launcherSerial: null,
+    sightSerial: r.serial_number,
+    status: (r.status || 'UNBUILT').toUpperCase(),     // build status from the register
+    project: r.project || null,
+    country: r.customer || null,
+    trolleyNumber: r.trolley_number,
+    trolleyPosition: r.trolley_position
+  }));
+  fatpdi.units = fatpdi.units.concat(pageUnits);
+  fatpdi.offset += (data || []).length;
+
+  const cfg = _stageCfg();
+  footer.textContent = `${fatpdi.docCode} · Acceptance spec ${cfg.acceptanceSpec || ''}`;
+  _withTimeout(supabaseClient.from('document_revisions')
+      .select('doc_code,revision,revision_date').eq('doc_code', fatpdi.docCode).limit(1),
+    10000, 'Document revision')
+    .then(({ data: doc }) => {
+      const d = doc && doc.length ? doc[0] : null;
+      footer.textContent = (d ? `${d.doc_code} · Rev ${d.revision} · ${(d.revision_date||'').slice(0,10)}`
+                              : `${fatpdi.docCode} (not yet registered in Document Revision Control)`)
+                         + ` · Acceptance spec ${cfg.acceptanceSpec || ''}`;
+    })
+    .catch(() => {});
+
+  if (fatpdi.units.length === 0) {
+    emptyMsg.style.display = 'block';
+    emptyMsg.textContent = `No ${fatpdi.cardType} sights in the serial register match this filter. `
+      + `A sight must be loaded in the serial register (Rippel Matrix) before it can be accepted.`;
+    if (countLabel) countLabel.textContent = '';
+    if (loadMoreBtn) loadMoreBtn.style.display = 'none';
+    return;
+  }
+
+  const pageSerials = pageUnits.map(u => u.unitSerial);
+  const { data: existing, error: exErr } = await _withTimeout(
+    supabaseClient.from(_fatpdiTable())
+      .select('unit_serial,item_id,result,remarks,accepted,notes,country,inspected_by,inspected_at')
+      .eq('card_type', fatpdi.cardType).in('unit_serial', pageSerials),
+    20000, 'Loading saved acceptance');
+  if (exErr) throw exErr;
+  (existing || []).forEach(row => {
+    const us = row.unit_serial;
+    if (!fatpdi.results[us]) fatpdi.results[us] = {};
+    if (row.item_id) fatpdi.results[us][row.item_id] = row.result;
+    if (row.remarks) fatpdi.remarks[us] = row.remarks;
+    if (row.notes) fatpdi.notes[us] = row.notes;
+    if (row.accepted === true || row.accepted === false) {
+      fatpdi.accept[us] = row.accepted ? 'YES' : 'NO';
+      fatpdi.saved[us] = { accepted: row.accepted, by: row.inspected_by, at: row.inspected_at };
+    }
+    const u = fatpdi.units.find(x => x.unitSerial === us);
+    if (u && row.country && !u.country) u.country = row.country;
+  });
+
+  _renderFatPdiGrid();
+  if (countLabel) countLabel.textContent = `Showing ${fatpdi.units.length}${pageFull ? ' — more available' : ''} · ${Object.keys(fatpdi.saved).length} already decided on this page`;
+  if (loadMoreBtn) {
+    loadMoreBtn.style.display = pageFull ? 'block' : 'none';
+    loadMoreBtn.disabled = false;
+    loadMoreBtn.textContent = `Load ${FATPDI_PAGE_SIZE} More`;
+  }
+}
+
+function _setAccept(btn) {
+  const unit = btn.dataset.unit, val = btn.dataset.val;
+  fatpdi.accept[unit] = val;
+  fatpdi.touched[unit] = true;
+  btn.parentElement.querySelectorAll('.fatpdi-toggle').forEach(b => {
+    b.classList.toggle('is-pass', b.dataset.val === 'YES' && val === 'YES');
+    b.classList.toggle('is-fail', b.dataset.val === 'NO'  && val === 'NO');
+  });
+}
+function _setFatPdiNotes(inp) { fatpdi.notes[inp.dataset.notesUnit] = inp.value; fatpdi.touched[inp.dataset.notesUnit] = true; }
+
 // ── Render the grid: rows = units, columns = checklist items ───────────────
 function _renderFatPdiGrid() {
   const items = FATPDI_TYPES[fatpdi.cardType][fatpdi.stage].items;
@@ -293,18 +418,24 @@ function _renderFatPdiGrid() {
   let html = '<thead><tr>';
   html += `<th style="position:sticky;left:0;background:var(--surface,#111f38);z-index:2;min-width:110px;">Serial</th>`;
   html += `<th style="min-width:80px;">Trolley/Pos</th>`;
+  if (_isAcc()) html += `<th style="min-width:90px;">Country</th>`;
   items.forEach(it => { html += `<th style="min-width:120px;font-size:11px;">${it.label}</th>`; });
-  html += `<th style="min-width:160px;">Remarks</th></tr></thead><tbody>`;
+  html += `<th style="min-width:160px;">Remarks</th>`;
+  if (_isAcc()) html += `<th style="min-width:110px;">Accept</th><th style="min-width:180px;">Notes</th>`;
+  html += `</tr></thead><tbody>`;
 
   fatpdi.units.forEach(u => {
     const us = u.unitSerial;
     if (!fatpdi.results[us]) fatpdi.results[us] = {};
     html += `<tr>`;
+    const savedAcc = _isAcc() ? fatpdi.saved[us] : null;
     const statusTag = (u.status !== 'COMPLETE'
       ? `<br><span style="font-size:9px;color:#e08f1a;">build ${u.status||'IN PROGRESS'}${fatpdi.adminPreview ? ' (preview)' : ''}</span>` : '')
-      + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} FAIL on build card</span>` : '');
+      + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} FAIL on build card</span>` : '')
+      + (savedAcc ? `<br><span style="font-size:9px;font-weight:700;color:${savedAcc.accepted ? '#1a9e5c' : '#e03c3c'};">${savedAcc.accepted ? '✓ ACCEPTED' : '✗ NOT ACCEPTED'} · OP ${savedAcc.by || '?'} ${(savedAcc.at || '').slice(0,10)}</span>` : '');
     html += `<td style="position:sticky;left:0;background:var(--bg,#0a1628);font-family:var(--font-mono,monospace);font-weight:700;">${us}${u.sightSerial && u.launcherSerial ? `<br><span style="font-size:10px;color:var(--text-dim,#8fa3c0);">Sight ${u.sightSerial}</span>` : ''}${statusTag}</td>`;
     html += `<td style="font-size:12px;">${u.trolleyNumber||'—'} / ${u.trolleyPosition||'—'}</td>`;
+    if (_isAcc()) html += `<td style="font-size:12px;">${u.country || '—'}</td>`;
     items.forEach(it => {
       const cur = fatpdi.results[us][it.id] || null;
       html += `<td style="text-align:center;">
@@ -313,6 +444,14 @@ function _renderFatPdiGrid() {
       </td>`;
     });
     html += `<td><input type="text" data-remarks-unit="${us}" value="${(fatpdi.remarks[us]||'').replace(/"/g,'&quot;')}" style="width:100%;font-size:12px;" onchange="_setFatPdiRemarks(this)"></td>`;
+    if (_isAcc()) {
+      const acc = fatpdi.accept[us] || null;
+      html += `<td style="text-align:center;white-space:nowrap;">
+        <button type="button" class="fatpdi-toggle ${acc==='YES'?'is-pass':''}" style="width:44px;" data-unit="${us}" data-val="YES" onclick="_setAccept(this)">YES</button>
+        <button type="button" class="fatpdi-toggle ${acc==='NO'?'is-fail':''}" style="width:44px;" data-unit="${us}" data-val="NO" onclick="_setAccept(this)">NO</button>
+      </td>`;
+      html += `<td><input type="text" data-notes-unit="${us}" value="${(fatpdi.notes[us]||'').replace(/"/g,'&quot;')}" placeholder="Notes" style="width:100%;font-size:12px;" onchange="_setFatPdiNotes(this)"></td>`;
+    }
     html += `</tr>`;
   });
   html += '</tbody>';
@@ -323,6 +462,7 @@ function _setFatPdiResult(btn) {
   const unit = btn.dataset.unit, item = btn.dataset.item, val = btn.dataset.val;
   if (!fatpdi.results[unit]) fatpdi.results[unit] = {};
   fatpdi.results[unit][item] = val;
+  fatpdi.touched[unit] = true;
   // Refresh just this row's two buttons
   const cell = btn.parentElement;
   cell.querySelectorAll('.fatpdi-toggle').forEach(b => {
@@ -333,6 +473,7 @@ function _setFatPdiResult(btn) {
 
 function _setFatPdiRemarks(inp) {
   fatpdi.remarks[inp.dataset.remarksUnit] = inp.value;
+  fatpdi.touched[inp.dataset.remarksUnit] = true;
 }
 
 // ── Save all entered results for this stage+cardType ───────────────────────
@@ -342,14 +483,46 @@ async function saveFatPdi() {
     return;
   }
   const rows = [];
+  const cfg = _stageCfg();
+  // 31/10/2026 — Final Acceptance rules (the paper form's ACCEPT YES / NO):
+  //   YES needs every action marked PASS; NO needs a reason in Remarks or
+  //   Notes. Checked before anything is written, per sight.
+  if (_isAcc()) {
+    for (const u of fatpdi.units) {
+      const us = u.unitSerial, acc = fatpdi.accept[us];
+      if (!acc) continue;
+      const res = fatpdi.results[us] || {};
+      if (acc === 'YES') {
+        const notPassed = cfg.items.filter(it => res[it.id] !== 'PASS').map(it => it.label);
+        if (notPassed.length) {
+          showToast(`🚫 ${us}: ACCEPT YES needs every action PASS — ${notPassed.slice(0,2).join(', ')}${notPassed.length>2?' + more':''}`, 'error');
+          return;
+        }
+      } else if (!(fatpdi.remarks[us] || fatpdi.notes[us] || '').trim()) {
+        showToast(`🚫 ${us}: ACCEPT NO needs a reason in Remarks or Notes`, 'error');
+        return;
+      }
+    }
+  }
   fatpdi.units.forEach(u => {
     const us = u.unitSerial;
+    // Acceptance stage: only the sights the operator actually changed are
+    // written, so an already-accepted sight keeps its inspector and date.
+    if (_isAcc() && !fatpdi.touched[us]) return;
     const itemResults = fatpdi.results[us] || {};
     const items = FATPDI_TYPES[fatpdi.cardType][fatpdi.stage].items;
+    const accExtra = _isAcc() ? {
+      accepted: fatpdi.accept[us] === 'YES' ? true : fatpdi.accept[us] === 'NO' ? false : null,
+      notes: fatpdi.notes[us] || null,
+      country: u.country || null,
+      project: u.project || null,
+      acceptance_spec: cfg.acceptanceSpec || null
+    } : {};
     items.forEach(it => {
       const result = itemResults[it.id];
       if (!result) return; // skip untouched items — allows partial saves
       rows.push({
+        ...accExtra,
         unit_serial: us,
         launcher_serial: u.launcherSerial,
         sight_serial: u.sightSerial,
@@ -377,7 +550,16 @@ async function saveFatPdi() {
     const { error } = await supabaseClient.from(_fatpdiTable())
       .upsert(rows, { onConflict: 'unit_serial,card_type,item_id' });
     if (error) throw error;
-    showToast(`✅ ${fatpdi.stage} results saved (${rows.length} entries)`, 'ok');
+    showToast(`✅ ${_isAcc() ? 'Acceptance' : fatpdi.stage} results saved (${rows.length} entries)`, 'ok');
+    if (_isAcc()) {
+      // show the decision stamps without a full reload
+      fatpdi.units.forEach(u => {
+        const a = fatpdi.accept[u.unitSerial];
+        if (a && fatpdi.touched[u.unitSerial]) fatpdi.saved[u.unitSerial] = { accepted: a === 'YES', by: state.operator, at: new Date().toISOString() };
+      });
+      fatpdi.touched = {};
+      _renderFatPdiGrid();
+    }
   } catch (e) {
     console.error('[FAT/PDI] save error', e);
     showToast('❌ Save failed — ' + (e.message||e), 'error');
