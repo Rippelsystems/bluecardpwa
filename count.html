@@ -1,1 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Rippel Matrix — Component Count</title>
+<!-- ─────────────────────────────────────────────────────────────────────────
+  count.html — Component Count on the tablet (v1.0, 31 Oct 2026)
+  Lives in the Blue Card repo (bluecardpwa) next to menu.html, behind the
+  same site password. LIVE by default; ?env=test uses the TEST database.
+  Needs stock_take_counts_31Oct.sql on the database first.
+
+  The camera counts the parts laid out on the tray (OpenCV.js, on the tablet
+  itself — nothing is sent away to be counted). The counter checks the
+  numbered dots, corrects with − / + and saves. Two kinds of count:
+
+    1. RECEIVING COUNT — an aid while booking a delivery: choose the PO line,
+       count, and the number is shown to book in Book Arrival. It is LOGGED
+       only (stock_take_counts, mode RECEIVING). It books nothing and Book
+       Arrival (receiving.html) is not changed and does not read it.
+    2. STOCK TAKE — choose the store and the part, count. The count goes to
+       the Stock Count screen on the laptop (Stock → Stock Count), where it is
+       Accepted (booked through book_stock_count), Rejected or sent back
+       for a Recount. The tablet never changes stock. The count is BLIND:
+       the Matrix quantity is not shown here.
+
+  A small proof photo (~80 KB, the numbered dots on it) is kept only for a
+  stock take count that differs from Matrix — uploaded in the background
+  after the count is saved, so nobody waits for it.
+  Who may count: Admin + roles with "Tablet Count" in role_permissions.
+──────────────────────────────────────────────────────────────────────────── -->
+<!-- ── SITE ACCESS GATE (same as index.html — see js/sitegate.js) ── -->
+<style>
+  html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
+  #bcds-gate { position: fixed; inset: 0; z-index: 99999; background: #0a1628;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    font-family: system-ui, sans-serif; }
+  #bcds-gate .bcds-card { width: 100%; max-width: 360px; background: #111f38;
+    border: 1px solid #1e3354; border-radius: 14px; padding: 28px 24px; }
+  #bcds-gate .bcds-brand { color: #4a9eff; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.18em; text-align: center; }
+  #bcds-gate .bcds-title { color: #fff; font-size: 26px; font-weight: 800;
+    text-align: center; margin-top: 8px; }
+  #bcds-gate .bcds-sub { color: #6f86a8; font-size: 12px; text-align: center;
+    margin: 4px 0 22px; }
+  #bcds-gate label { display: block; color: #8fa3c0; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.08em; margin-bottom: 6px; }
+  #bcds-gate input { width: 100%; box-sizing: border-box; padding: 13px 14px;
+    font-size: 16px; border-radius: 8px; border: 1px solid #1e3354; background: #f1f3f6;
+    color: #0a1628; outline: none; }
+  #bcds-gate #bcds-err { color: #ff6b6b; font-size: 12px; font-weight: 600;
+    min-height: 18px; margin: 8px 0 4px; text-align: center; }
+  #bcds-gate button { width: 100%; padding: 13px; font-size: 15px; font-weight: 700;
+    border: none; border-radius: 8px; background: #1a6cf0; color: #fff; cursor: pointer; }
+  #bcds-gate button:disabled { opacity: 0.6; }
+  #bcds-gate .bcds-note { color: #4a6a8a; font-size: 11px; text-align: center; margin-top: 12px; }
+</style>
+<script>
+  (function () {
+    var ok = false;
+    try { var v = JSON.parse(localStorage.getItem('bcds_site_access_v1') || 'null'); ok = !!(v && v.until > Date.now()); } catch (e) {}
+    if (!ok) document.documentElement.classList.add('bcds-locked');
+  })();
+</script>
+<style>
+  :root{
+    --navy:#1F3864; --green:#1B5E20; --amber:#E65100; --red:#B71C1C; --brown:#4E342E;
+    --bg:#F2F4F7; --panel:#FFFFFF; --border:#D8DEE8; --text:#1A2333; --muted:#6B7688;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; min-height:100%; background:var(--bg);
+    font-family:"Segoe UI",Roboto,Arial,sans-serif; color:var(--text);
+    -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+  #app{ min-height:100vh; display:flex; flex-direction:column; }
+  header{ background:var(--navy); color:#fff; padding:14px 20px; display:flex;
+    align-items:center; gap:14px; position:sticky; top:0; z-index:10; }
+  header .titles{ flex:1; min-width:0; }
+  header h1{ margin:0; font-size:20px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  header .sub{ font-size:12px; color:#A8C4E0; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  header .who{ font-size:13px; color:#C8D6EA; text-align:right; }
+  header .file{ position:absolute; top:3px; right:8px; font-size:9px; color:#8DA2C2; }
+  header button{ background:rgba(255,255,255,.14); border:none; color:#fff;
+    font-size:15px; font-weight:600; padding:11px 16px; border-radius:8px; }
+  .envbar{ text-align:center; font-weight:700; font-size:13px; padding:5px; color:#fff; }
+  .env-live{ background:var(--green); } .env-test{ background:var(--red); }
+  main{ flex:1; padding:18px 20px 120px; max-width:1200px; width:100%; margin:0 auto; }
+  .label{ font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.6px; margin:18px 0 8px 2px; }
+  .card{ background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:16px 18px; margin-bottom:12px; }
+  .empty{ text-align:center; color:var(--muted); margin-top:50px; font-size:16px; }
+  .err{ background:#FDECEA; border:1px solid var(--red); color:var(--red);
+    padding:12px 16px; border-radius:8px; font-size:15px; margin-bottom:14px; white-space:pre-line; }
+  .warn{ background:#FFF4E5; border:1px solid var(--amber); color:#8A3B00;
+    padding:12px 16px; border-radius:8px; font-size:15px; margin-bottom:14px; white-space:pre-line; }
+  .info{ background:#EAF0FA; border:1px solid #B9CBE6; color:var(--navy);
+    padding:12px 16px; border-radius:8px; font-size:14px; margin-bottom:14px; }
+  .spin{ text-align:center; color:var(--muted); margin-top:60px; font-size:16px; }
+
+  /* login */
+  .names{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+  .name{ background:var(--panel); border:2px solid var(--border); border-radius:12px;
+    padding:18px 10px; text-align:center; font-size:17px; font-weight:700; }
+  .pinwrap{ display:flex; flex-direction:column; align-items:center; margin-top:10px; }
+  .dots{ display:flex; gap:14px; margin:14px 0 22px; }
+  .dot{ width:18px; height:18px; border-radius:50%; border:2px solid var(--navy); }
+  .dot.f{ background:var(--navy); }
+  .keys{ display:grid; grid-template-columns:repeat(3,84px); gap:14px; }
+  .key{ height:72px; border-radius:14px; border:1px solid var(--border); background:var(--panel);
+    font-size:26px; font-weight:600; color:var(--text); }
+  .key.s{ font-size:14px; color:var(--muted); }
+
+  /* home tiles */
+  .tiles{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px; }
+  .tile{ display:flex; align-items:center; gap:18px; background:var(--panel); border:2px solid var(--border);
+    border-radius:16px; padding:24px; min-height:130px; }
+  .tile:active{ border-color:var(--navy); }
+  .tile .num{ flex:0 0 56px; height:56px; border-radius:14px; display:flex; align-items:center;
+    justify-content:center; font-size:26px; font-weight:800; color:#fff; }
+  .tile .t{ font-size:21px; font-weight:800; }
+  .tile .w{ color:var(--muted); font-size:14px; margin-top:4px; line-height:1.35; }
+
+  /* lists */
+  .search{ width:100%; font-size:18px; padding:14px 16px; border-radius:10px;
+    border:1px solid var(--border); margin-bottom:14px; }
+  .field{ width:100%; font-size:18px; padding:14px 16px; border:1px solid var(--border); border-radius:10px; }
+  .chips{ display:flex; flex-wrap:wrap; gap:10px; }
+  .chip{ padding:14px 18px; font-size:16px; font-weight:700; border-radius:12px; border:2px solid var(--border); background:#fff; }
+  .chip.on{ border-color:var(--navy); background:#EAF0FA; color:var(--navy); }
+  .row{ display:flex; align-items:center; gap:14px; }
+  .row .grow{ flex:1; min-width:0; }
+  .row .main{ font-size:17px; font-weight:700; }
+  .row .meta{ font-size:13px; color:var(--muted); margin-top:3px; }
+  .badge{ font-size:12px; font-weight:700; padding:5px 10px; border-radius:14px; color:#fff; white-space:nowrap; }
+  .b-done{ background:var(--green); } .b-rec{ background:var(--amber); } .b-grey{ background:#ECEFF1; color:var(--text); }
+  .b-open{ background:#1565C0; } .b-back{ background:var(--amber); }
+
+  /* camera */
+  .cgrid{ display:grid; grid-template-columns:1fr 320px; gap:16px; }
+  @media (max-width: 900px){ .cgrid{ grid-template-columns:1fr; } }
+  .view{ background:#000; border-radius:12px; overflow:hidden; position:relative; min-height:260px;
+    display:flex; align-items:center; justify-content:center; }
+  .view video, .view canvas{ width:100%; height:auto; display:block; }
+  .view .msg{ color:#9fb3cc; padding:30px; text-align:center; font-size:15px; }
+  .big{ font-size:76px; font-weight:800; text-align:center; line-height:1; color:var(--navy); }
+  .detail{ text-align:center; color:var(--muted); font-size:14px; margin-top:6px; min-height:20px; }
+  .adj{ display:flex; gap:10px; justify-content:center; margin-top:12px; }
+  .adj button{ width:70px; height:58px; font-size:30px; font-weight:700; border-radius:10px; border:1px solid var(--border); background:#ECEFF1; }
+  .btn{ width:100%; border:none; border-radius:10px; padding:16px; font-size:18px; font-weight:700; margin-top:8px; }
+  .go{ background:var(--green); color:#fff; } .sec{ background:#ECEFF1; color:var(--text); }
+  .btn:disabled{ opacity:.45; }
+  .seg{ display:flex; gap:6px; }
+  .seg button{ flex:1; padding:10px 4px; font-size:13px; font-weight:700; border-radius:8px; border:2px solid var(--border); background:#fff; }
+  .seg button.on{ border-color:var(--navy); background:#EAF0FA; color:var(--navy); }
+  .ctl{ display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; }
+  .ctl input[type=range]{ flex:1; height:30px; }
+  .ctl .v{ width:44px; text-align:right; font-weight:700; }
+  .legend{ font-size:13px; color:var(--muted); line-height:1.6; margin-top:8px; }
+  .ldot{ display:inline-block; width:12px; height:12px; border-radius:50%; vertical-align:-1px; margin-right:4px; }
+  details summary{ font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; cursor:pointer; }
+
+  .bar{ position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--border);
+    padding:12px 20px; display:flex; justify-content:center; z-index:20; }
+  .bar .inner{ display:flex; gap:12px; width:100%; max-width:1200px; align-items:center; }
+  .bar .btn{ margin-top:0; }
+  .done{ text-align:center; margin-top:40px; }
+  .done .tickbig{ width:92px; height:92px; border-radius:50%; background:var(--green); color:#fff;
+    font-size:48px; line-height:92px; margin:0 auto 18px; }
+  .bookit{ font-size:64px; font-weight:800; color:var(--green); margin:10px 0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase.js?v=1.22"></script>
+<script src="js/sitegate.js?v=1.22"></script>
+<script>
+"use strict";
+// ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
+// LIVE = the Blue Card connection (js/supabase.js). ?env=test = TEST database
+// (same TEST connection as receiving.html).
+const CNT_VERSION = "1.0";
+const CNT_TEST = /(^|[?&])env=test(&|$)/i.test(location.search);
+const CNT_TEST_URL = "https://wtkbsvopuvtxiprjtqqx.supabase.co";
+const CNT_TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0a2Jzdm9wdXZ0eGlwcmp0cXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTUzNjIsImV4cCI6MjA5NjE3MTM2Mn0.q3cRrSbgmgzaw9PzHEuXaic-3Cl-JAiAPVbZnyoY8SQ";
+const db = window.__cntDb || window.supabase.createClient(
+  CNT_TEST ? CNT_TEST_URL : SUPABASE_URL,
+  CNT_TEST ? CNT_TEST_KEY : SUPABASE_ANON_KEY,
+  { auth: { persistSession: false, autoRefreshToken: false, storageKey: "cnt-" + (CNT_TEST ? "test" : "live") } });
+
+const PHOTO_BUCKET = "stock-count-photos";
+const IDLE_MINUTES = 5;
+const CALL_TIMEOUT = window.__cntTimeout || 20000;
+// Same stores / products as the Stock Count screen on the laptop (frm_stockview.StockCountView)
+const STORES = ["XRGL Store", "GRN40 Store", "RLL Store", "COTS Store", "RLL Legacy Store",
+                "M(S)GL Store", "Spares & Accessories Store", "Packaging Store"];
+const PRODUCTS = ["All", "XRGL40", "GRN40", "RLL", "RLL Legacy", "M(S)GL"];
+const STORE_PRODUCT = { "XRGL Store": "XRGL40", "GRN40 Store": "GRN40", "RLL Store": "RLL",
+                        "RLL Legacy Store": "RLL Legacy", "M(S)GL Store": "M(S)GL" };
+// Built-in process suffixes (db_manager._BUILTIN_PROCESS_SUFFIXES) — the table
+// process_suffixes is read on login and used when it can be read.
+let SUFFIXES = new Set(["M","T","XRAY","HT","C","W","BD","ANEAL","ANNEAL","CI","XRAYI","MI","WI","HTI",
+  "KITR","KITB","H","F","L","EXT","D","TI","BDI","KIT","KIT2","T1","S","ENG","P","CD"]);
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+const S = {
+  screen: "names", users: null, usersErr: "", user: null, pin: "", pinErr: "",
+  // stock take
+  store: null, product: "All", items: null, itemsErr: "", itemSearch: "", open: {},
+  recounts: null, recountsErr: "",
+  // receiving
+  pos: null, posErr: "", poSearch: "", po: null, lines: null, linesErr: "", dn: "",
+  // the count in hand
+  job: null,          // {mode, stock_item_id, title, sub, po_number, line_ref, outstanding}
+  ref: null, result: null, err: "",
+};
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+const $ = (h) => { document.getElementById("app").innerHTML = h; };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = (v) => Number(v || 0);
+const newRef = () => (crypto.randomUUID ? crypto.randomUUID()
+  : "c" + Date.now().toString(36) + Math.random().toString(36).slice(2));
+const hhmm = (t) => { try { return new Date(t).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" }); } catch (e) { return ""; } };
+const ddmm = (t) => { try { return new Date(t).toLocaleDateString("en-ZA", { day: "2-digit", month: "2-digit" }); } catch (e) { return ""; } };
+
+function withTimeout(p, ms = CALL_TIMEOUT) {
+  return Promise.race([p, new Promise((_, rej) =>
+    setTimeout(() => rej(new Error("No answer from the database (Wi-Fi?)")), ms))]);
+}
+function hasSuffix(code) {          // same rule as db_manager._has_process_suffix
+  const sc = String(code || "").trim().toUpperCase();
+  if (!sc.includes("_")) return false;
+  const toks = sc.split("_").slice(1).join("_").split(/[ _]+/).filter(Boolean);
+  return toks.length > 0 && toks.every(t => SUFFIXES.has(t));
+}
+function header(title, sub, back) {
+  return `
+    <div class="envbar ${CNT_TEST ? "env-test" : "env-live"}">${CNT_TEST
+      ? "⚠ TEST MODE — TEST database — NOT live data"
+      : "✓ LIVE — Production database"}</div>
+    <header>
+      <span class="file">count.html v${CNT_VERSION}</span>
+      ${back ? `<button onclick="${back}">${back === "toMenu()" ? "‹ Menu" : "‹ Back"}</button>` : ""}
+      <div class="titles"><h1>${esc(title)}</h1><div class="sub">${esc(sub || "")}</div></div>
+      ${S.user ? `<div class="who">${esc(S.user.username)}<br><a style="color:#A8C4E0" href="#" onclick="logout();return false">Log out</a></div>` : ""}
+    </header>`;
+}
+function alertMsg(m) {
+  document.querySelectorAll(".toast").forEach(x => x.remove());
+  const w = document.createElement("div"); w.className = "warn toast";
+  w.style.cssText = "position:fixed;top:90px;left:50%;transform:translateX(-50%);z-index:50;max-width:90%;box-shadow:0 4px 18px rgba(0,0,0,.2)";
+  w.textContent = m; document.body.appendChild(w); setTimeout(() => w.remove(), 4500);
+}
+async function readAll(build) {     // Supabase sends max 1,000 rows per call — page through
+  const out = [];
+  for (let start = 0; start < 50000; start += 1000) {
+    const { data, error } = await withTimeout(build().range(start, start + 999));
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+// idle logout (shared tablet)
+let idleTimer = null;
+function touch() {
+  clearTimeout(idleTimer);
+  if (S.user && S.screen !== "saving")
+    idleTimer = setTimeout(() => logout("Logged out after " + IDLE_MINUTES + " minutes without use."), IDLE_MINUTES * 60000);
+}
+["pointerdown", "keydown"].forEach(e => document.addEventListener(e, touch, { passive: true }));
+function logout(msg) {
+  stopCam();
+  Object.assign(S, { user: null, pin: "", job: null, screen: "names", pinErr: msg || "" });
+  render();
+}
+function toMenu() { stopCam(); location.href = "menu.html" + (CNT_TEST ? "?env=test" : ""); }
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+function render() {
+  if (S.screen !== "camera") stopCam();
+  ({ names: rNames, pin: rPin, home: rHome, stores: rStores, items: rItems, recounts: rRecounts,
+     pos: rPos, lines: rLines, camera: rCamera, saving: rSaving, unsure: rUnsure, done: rDone })[S.screen]();
+}
+
+// 1. who is counting
+async function loadUsers() {
+  S.users = null; render();
+  try {
+    const [u, p] = await withTimeout(Promise.all([
+      db.from("users").select("username, role").eq("active", true).order("username"),
+      db.from("role_permissions").select("role").eq("button_name", "Tablet Count").eq("allowed", true),
+    ]));
+    if (u.error) throw u.error;
+    if (p.error) throw p.error;
+    const ok = new Set((p.data || []).map(r => r.role)); ok.add("Admin");
+    S.users = (u.data || []).filter(x => ok.has(x.role)); S.usersErr = "";
+  } catch (e) { S.users = []; S.usersErr = "Could not load names: " + (e.message || e); }
+  render();
+}
+function rNames() {
+  const list = S.users === null ? `<div class="spin">Loading…</div>`
+    : S.users.length ? `<div class="names">${S.users.map((u, i) =>
+        `<div class="name" onclick="pickUser(${i})">${esc(u.username)}</div>`).join("")}</div>`
+    : `<div class="empty">No one may count yet.<br>Give the role “Tablet Count” in Matrix → Admin → Permissions.</div>`;
+  $(header("Component Count", "Who is counting?", "toMenu()") + `<main>
+      ${S.pinErr ? `<div class="info">${esc(S.pinErr)}</div>` : ""}
+      ${S.usersErr ? `<div class="err">${esc(S.usersErr)}<br><br><button class="btn sec" style="width:auto" onclick="loadUsers()">Try again</button></div>` : ""}
+      <div class="label">Tap your name</div>${list}</main>`);
+}
+function pickUser(i) { S.user = { username: S.users[i].username }; S.pin = ""; S.pinErr = ""; S.screen = "pin"; render(); }
+
+// 2. PIN
+function rPin() {
+  const dots = [0, 1, 2, 3].map(i => `<div class="dot ${i < S.pin.length ? "f" : ""}"></div>`).join("");
+  $(header("Component Count", "Enter your Matrix PIN", "S.user=null;S.screen='names';render()") + `<main>
+     <div class="pinwrap">
+       <div style="font-size:20px;font-weight:700">${esc(S.user.username)}</div>
+       <div class="dots">${dots}</div>
+       <div class="keys">
+         ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="key" onclick="pinKey('${n}')">${n}</button>`).join("")}
+         <button class="key s" onclick="S.pin='';render()">Clear</button>
+         <button class="key" onclick="pinKey('0')">0</button>
+         <button class="key s" onclick="S.pin=S.pin.slice(0,-1);render()">⌫</button>
+       </div>
+       <div style="color:var(--red);font-weight:600;margin-top:16px;min-height:22px">${esc(S.pinErr)}</div>
+     </div></main>`);
+}
+async function pinKey(d) {
+  if (S.pin.length >= 4) return;
+  S.pin += d; S.pinErr = ""; render();
+  if (S.pin.length < 4) return;
+  try {
+    const { data, error } = await withTimeout(db.rpc("tablet_count_login", { p_username: S.user.username, p_pin: S.pin }));
+    if (error) throw error;
+    if (!data.ok) { S.pin = ""; S.pinErr = "Incorrect PIN — try again."; return render(); }
+    if (!data.can_count) { S.pin = ""; S.pinErr = `${data.role} may not count on the tablet.`; return render(); }
+    S.user = { username: data.username, role: data.role };
+    touch(); loadSuffixes(); goHome();
+  } catch (e) { S.pin = ""; S.pinErr = "Could not check the PIN: " + (e.message || e); render(); }
+}
+async function loadSuffixes() {    // optional — the built-in list stays if this fails
+  try {
+    const { data, error } = await withTimeout(db.from("process_suffixes").select("suffix, active"));
+    if (error) return;
+    const act = (data || []).filter(r => r.active && String(r.suffix || "").trim())
+                            .map(r => String(r.suffix).trim().toUpperCase());
+    if (act.length) SUFFIXES = new Set(act);
+  } catch (e) { /* keep built-in */ }
+}
+
+// 3. home — which kind of count
+async function goHome() {
+  S.screen = "home"; S.job = null; render();
+  try {        // recount badge
+    const { data, error } = await withTimeout(db.from("stock_take_counts")
+      .select("id").eq("mode", "STOCK_TAKE").eq("status", "Recount").limit(500));
+    if (!error) { S.recountN = (data || []).length; if (S.screen === "home") render(); }
+  } catch (e) { /* badge only */ }
+}
+function rHome() {
+  $(header("Component Count", "What are you counting?", "toMenu()") + `<main>
+    <div class="tiles" style="margin-top:10px">
+      <div class="tile" onclick="openPOs()"><div class="num" style="background:#1565C0">1</div>
+        <div><div class="t">Receiving count</div>
+          <div class="w">Count a delivery before you book it. Shows the number to book in Book Arrival — it does not book anything.</div></div></div>
+      <div class="tile" onclick="S.screen='stores';render()"><div class="num" style="background:var(--brown)">2</div>
+        <div><div class="t">Stock take</div>
+          <div class="w">Count a part in the store. The floor manager accepts or asks for a recount on the laptop.</div></div></div>
+      <div class="tile" onclick="openRecounts()"><div class="num" style="background:var(--amber)">↻</div>
+        <div><div class="t">Recounts${S.recountN ? ` <span class="badge b-rec">${S.recountN}</span>` : ""}</div>
+          <div class="w">Parts the floor manager sent back to be counted again.</div></div></div>
+    </div>
+    <div class="info" style="margin-top:22px">Lay the parts out on the counting tray so they do not touch.
+      Count GOOD parts only — rejected / quarantined parts are not counted.</div>
+  </main>`);
+}
+
+// 4a. stock take — store + product
+function rStores() {
+  $(header("Stock take", "Choose the store and product", "goHome()") + `<main>
+    <div class="label">Store</div>
+    <div class="chips">${STORES.map(s => `<button class="chip ${S.store === s ? "on" : ""}" onclick="pickStore('${esc(s)}')">${esc(s)}</button>`).join("")}</div>
+    <div class="label">Product</div>
+    <div class="chips">${PRODUCTS.map(p => `<button class="chip ${S.product === p ? "on" : ""}" onclick="S.product='${esc(p)}';render()">${esc(p)}</button>`).join("")}</div>
+  </main>
+  <div class="bar"><div class="inner">
+    <button class="btn go" ${S.store ? "" : "disabled"} onclick="openItems()">Show the parts ›</button></div></div>`);
+}
+function pickStore(s) { S.store = s; S.product = STORE_PRODUCT[s] || "All"; render(); }
+
+async function openItems() {
+  S.screen = "items"; S.items = null; S.itemsErr = ""; S.itemSearch = ""; render();
+  try {
+    const rows = await readAll(() => {
+      let q = db.from("stock_items").select("id, stock_code, item_name, product, storeroom, shelf_no")
+                .eq("storeroom", S.store).order("id");
+      if (S.product !== "All") q = q.eq("product", S.product);
+      return q;
+    });
+    S.items = rows.filter(r => !hasSuffix(r.stock_code) && !String(r.shelf_no || "").toUpperCase().includes("SHARED"))
+      .sort((a, z) => ((a.shelf_no || "") === "") - ((z.shelf_no || "") === "")
+        || String(a.shelf_no || "").localeCompare(String(z.shelf_no || ""), undefined, { numeric: true })
+        || String(a.item_name || "").localeCompare(String(z.item_name || "")));
+    await loadOpenCounts(S.items.map(r => r.id));
+  } catch (e) { S.items = []; S.itemsErr = "Could not load the parts: " + (e.message || e); }
+  render();
+}
+async function loadOpenCounts(ids) {
+  S.open = {};
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await withTimeout(db.from("stock_take_counts")
+      .select("stock_item_id, status, counted_by, counted_at, review_note")
+      .eq("mode", "STOCK_TAKE").in("status", ["Counted", "Recount"])
+      .in("stock_item_id", ids.slice(i, i + 200)));
+    if (error) throw error;
+    (data || []).forEach(r => { S.open[r.stock_item_id] = r; });
+  }
+}
+function itemsHTML() {
+  if (S.items === null) return `<div class="spin">Loading parts…</div>`;
+  const q = S.itemSearch.trim().toUpperCase();
+  const list = S.items.filter(r => !q || String(r.item_name || "").toUpperCase().includes(q)
+    || String(r.stock_code || "").toUpperCase().includes(q) || String(r.shelf_no || "").toUpperCase().includes(q));
+  if (!list.length) return `<div class="empty">No part matches “${esc(S.itemSearch)}”.</div>`;
+  return list.slice(0, 200).map(r => {
+    const o = S.open[r.id];
+    const badge = !o ? "" : o.status === "Recount"
+      ? `<span class="badge b-rec">↻ Recount</span>`
+      : `<span class="badge b-done">✓ counted ${esc(ddmm(o.counted_at))} ${esc(hhmm(o.counted_at))}</span>`;
+    return `<div class="card row" onclick="countItem(${Number(r.id)})">
+      <div class="grow"><div class="main">${esc(r.item_name || "")}</div>
+        <div class="meta">${esc(r.stock_code || "—")}${r.shelf_no ? " · shelf " + esc(r.shelf_no) : ""}${S.product === "All" && r.product ? " · " + esc(r.product) : ""}</div></div>
+      ${badge}</div>`;
+  }).join("") + (list.length > 200 ? `<div class="empty">${list.length - 200} more — type more of the name or part number</div>` : "");
+}
+function rItems() {
+  $(header(S.store, `${S.product === "All" ? "All products" : S.product} — tap the part you are counting`, "S.screen='stores';render()") + `<main>
+    ${S.itemsErr ? `<div class="err">${esc(S.itemsErr)}<br><br><button class="btn sec" style="width:auto" onclick="openItems()">Try again</button></div>` : ""}
+    <input class="search" placeholder="Search name, part number or shelf" value="${esc(S.itemSearch)}"
+           oninput="S.itemSearch=this.value;drawItems()">
+    <div id="itemlist">${itemsHTML()}</div></main>`);
+}
+function drawItems() { const b = document.getElementById("itemlist"); if (b) b.innerHTML = itemsHTML(); }
+function countItem(id) {
+  const r = (S.items || []).find(x => Number(x.id) === id); if (!r) return;
+  const o = S.open[r.id];
+  S.job = { mode: "STOCK_TAKE", stock_item_id: r.id, title: r.item_name || r.stock_code,
+            sub: `${r.stock_code || ""} · ${r.storeroom || ""}${r.shelf_no ? " · shelf " + r.shelf_no : ""}`,
+            note: o ? (o.status === "Recount"
+                       ? `Recount asked${o.review_note ? ": " + o.review_note : ""}. Your new count replaces the old one.`
+                       : `Already counted ${ddmm(o.counted_at)} ${hhmm(o.counted_at)} by ${o.counted_by}. A new count replaces it.`) : "",
+            back: "openItemsKeep()" };
+  openCamera();
+}
+function openItemsKeep() { S.screen = "items"; render(); }
+
+// 4b. recounts
+async function openRecounts() {
+  S.screen = "recounts"; S.recounts = null; S.recountsErr = ""; render();
+  try {
+    const { data, error } = await withTimeout(db.from("stock_take_counts")
+      .select("id, stock_item_id, stock_code, item_name, storeroom, counted_by, counted_at, reviewed_by, review_note")
+      .eq("mode", "STOCK_TAKE").eq("status", "Recount").order("reviewed_at", { ascending: false }).limit(500));
+    if (error) throw error;
+    S.recounts = data || [];
+  } catch (e) { S.recounts = []; S.recountsErr = "Could not load the recounts: " + (e.message || e); }
+  render();
+}
+function rRecounts() {
+  const list = S.recounts === null ? `<div class="spin">Loading…</div>`
+    : !S.recounts.length ? `<div class="empty">Nothing to recount. 👍</div>`
+    : S.recounts.map((r, i) => `<div class="card row" onclick="countRecount(${i})">
+        <div class="grow"><div class="main">${esc(r.item_name || "")}</div>
+          <div class="meta">${esc(r.stock_code || "—")} · ${esc(r.storeroom || "")} · asked by ${esc(r.reviewed_by || "?")}${r.review_note ? " — " + esc(r.review_note) : ""}</div></div>
+        <span class="badge b-rec">↻ Recount</span></div>`).join("");
+  $(header("Recounts", "Sent back by the floor manager", "goHome()") + `<main>
+    ${S.recountsErr ? `<div class="err">${esc(S.recountsErr)}</div>` : ""}${list}</main>`);
+}
+function countRecount(i) {
+  const r = S.recounts[i];
+  S.job = { mode: "STOCK_TAKE", stock_item_id: r.stock_item_id, title: r.item_name || r.stock_code,
+            sub: `${r.stock_code || ""} · ${r.storeroom || ""}`,
+            note: `Recount asked by ${r.reviewed_by || "?"}${r.review_note ? ": " + r.review_note : ""}.`,
+            back: "openRecounts()" };
+  openCamera();
+}
+
+// 5a. receiving — PO list (same POs as Book Arrival)
+async function openPOs() {
+  S.screen = "pos"; S.pos = null; S.posErr = ""; render();
+  try {
+    const { data, error } = await withTimeout(db.from("supplier_po")
+      .select("po_number, supplier, product, po_type, status, date_ordered")
+      .in("status", ["Open", "Backorder"]).order("date_ordered", { ascending: false }).limit(2000));
+    if (error) throw error;
+    S.pos = (data || []).filter(p => !/raw material/i.test(p.po_type || ""));
+  } catch (e) { S.pos = []; S.posErr = "Could not load POs: " + (e.message || e); }
+  render();
+}
+function poListHTML() {
+  if (S.pos === null) return `<div class="spin">Loading open POs…</div>`;
+  const q = S.poSearch.trim().toUpperCase();
+  const list = S.pos.filter(p => !q || (p.po_number || "").toUpperCase().includes(q) || (p.supplier || "").toUpperCase().includes(q));
+  if (!list.length) return `<div class="empty">No open PO matches “${esc(S.poSearch)}”.</div>`;
+  return list.slice(0, 150).map(p => `
+      <div class="card row" onclick="openPO('${esc(p.po_number)}')">
+        <div class="grow"><div class="main" style="color:var(--navy)">${esc(p.po_number)}</div>
+          <div class="meta">${esc(p.supplier || "")} · ordered ${esc((p.date_ordered || "").slice(0, 10))}</div></div>
+        ${p.product ? `<span class="badge b-grey">${esc(p.product)}</span>` : ""}
+        <span class="badge ${p.status === "Backorder" ? "b-back" : "b-open"}">${esc(p.status)}</span></div>`).join("")
+    + (list.length > 150 ? `<div class="empty">${list.length - 150} more — type more of the PO number</div>` : "");
+}
+function rPos() {
+  $(header("Receiving count", "Choose the PO on the delivery note", "goHome()") + `<main>
+    ${S.posErr ? `<div class="err">${esc(S.posErr)}<br><br><button class="btn sec" style="width:auto" onclick="openPOs()">Try again</button></div>` : ""}
+    <input class="search" placeholder="Search PO number or supplier" value="${esc(S.poSearch)}" oninput="S.poSearch=this.value;drawPOs()">
+    <div id="polist">${poListHTML()}</div></main>`);
+}
+function drawPOs() { const b = document.getElementById("polist"); if (b) b.innerHTML = poListHTML(); }
+
+async function openPO(poNumber) {
+  S.po = (S.pos || []).find(p => p.po_number === poNumber) || { po_number: poNumber };
+  S.screen = "lines"; S.lines = null; S.linesErr = ""; render();
+  try {
+    const { data, error } = await withTimeout(db.from("po_lines")
+      .select("line_ref, description, internal_part_no, qty_ordered, qty_received, line_status, is_shipping")
+      .eq("po_number", poNumber));
+    if (error) throw error;
+    S.lines = (data || []).filter(l => (l.line_status || "Open") !== "Complete" && !l.is_shipping)
+      .sort((a, z) => (a.line_ref || "").localeCompare(z.line_ref || "", undefined, { numeric: true }));
+  } catch (e) { S.lines = []; S.linesErr = "Could not load the PO lines: " + (e.message || e); }
+  render();
+}
+const outstanding = (l) => Math.max(0, num(l.qty_ordered) - num(l.qty_received));
+function rLines() {
+  const rows = S.lines === null ? `<div class="spin">Loading lines…</div>`
+    : !S.lines.length ? `<div class="empty">Every line on this PO is already received.</div>`
+    : S.lines.map((l, i) => `<div class="card row" onclick="countLine(${i})">
+        <div class="grow"><div class="meta">${esc(l.line_ref)} · ${esc(l.internal_part_no || "—")}</div>
+          <div class="main">${esc(l.description || "")}</div>
+          <div class="meta">Ordered <b>${num(l.qty_ordered)}</b> · Received <b>${num(l.qty_received)}</b> · Outstanding <b>${outstanding(l)}</b></div></div>
+        <span class="badge b-open">📷 Count</span></div>`).join("");
+  $(header(S.po.po_number, `${S.po.supplier || ""} — tap the line you are counting`, "openPOs()") + `<main>
+    ${S.linesErr ? `<div class="err">${esc(S.linesErr)}</div>` : ""}
+    <div class="label">Delivery note (optional — saved with the count)</div>
+    <input class="field" placeholder="Delivery note / reference" value="${esc(S.dn)}" oninput="S.dn=this.value">
+    <div class="label">Lines still open</div>${rows}</main>`);
+}
+function countLine(i) {
+  const l = S.lines[i];
+  S.job = { mode: "RECEIVING", po_number: S.po.po_number, line_ref: l.line_ref,
+            title: l.description || l.internal_part_no, outstanding: outstanding(l),
+            sub: `${S.po.po_number} · ${l.line_ref} · ${l.internal_part_no || ""}`,
+            note: `Outstanding on this line: ${outstanding(l)}. The count is only an aid — book it in Book Arrival.`,
+            back: "S.screen='lines';render()" };
+  openCamera();
+}
+
+// ─── 6. CAMERA + COUNTING ENGINE ─────────────────────────────────────────────
+// OpenCV.js (jsDelivr CDN, ~10 MB, cached by the browser after the first time).
+// ?cv=<url> overrides (testing only). Loaded when the first count is started.
+const CV_URL = new URLSearchParams(location.search).get("cv")
+  || "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js";
+let cv = null, cvLoading = null;
+function loadCv() {
+  if (cv) return Promise.resolve(true);      // never the module itself (see below)
+  if (cvLoading) return cvLoading;
+  cvLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = CV_URL; s.async = true;
+    s.onload = async () => {
+      try {
+        let c = window.cv;
+        if (c instanceof Promise) c = await c;
+        if (!c.Mat) await new Promise(r => { c.onRuntimeInitialized = r; });
+        // NOTE: never resolve() with the OpenCV module itself — it has its own
+        // .then(), and handing it to resolve() loops forever (page freezes)
+        cv = c; resolve(true);
+      } catch (e) { cvLoading = null; reject(e); }
+    };
+    s.onerror = () => { cvLoading = null; s.remove(); reject(new Error("Could not load the counting engine (Wi-Fi?)")); };
+    document.head.appendChild(s);
+  });
+  return cvLoading;
+}
+
+// counting settings stay for the session (same tray, same light)
+const CS = { pol: "auto", thr: 0, minp: 15, edge: true };
+const C = { stream: null, frame: null, blobs: [], auto: 0, adj: 0, refArea: null, detail: "", shot: false };
+const MAX_W = 1280;
+
+function openCamera() {
+  Object.assign(C, { frame: null, blobs: [], auto: 0, adj: 0, refArea: null, detail: "", shot: false });
+  S.ref = null; S.err = "";
+  S.screen = "camera"; render();
+  startCam();
+  loadCv().then(() => { const b = document.getElementById("btnCount"); if (b) b.disabled = !C.stream; const w = document.getElementById("cvwarn"); if (w) w.remove(); if (C.frame) runCount(); })
+          .catch(e => { const w = document.getElementById("cvwarn"); if (w) { w.className = "err"; w.textContent = e.message || String(e); } });
+}
+function rCamera() {
+  const j = S.job;
+  $(header(j.title, j.sub, j.back) + `<main>
+    ${cv ? "" : `<div id="cvwarn" class="info">Loading the counting engine (first time ~10 MB)…</div>`}
+    ${j.note ? `<div class="info">${esc(j.note)}</div>` : ""}
+    <div class="cgrid">
+      <div>
+        <div class="view">
+          <div class="msg" id="viewmsg">Starting camera…</div>
+          <video id="video" playsinline muted autoplay style="display:none"></video>
+          <canvas id="out" style="display:none"></canvas>
+        </div>
+        <div class="legend">
+          <span class="ldot" style="background:#2E7D32"></span>counted as 1 &nbsp;
+          <span class="ldot" style="background:#E65100"></span>bigger blob counted as 2+ — check &nbsp;
+          <span class="ldot" style="background:#9E9E9E"></span>too small, ignored<br>
+          Counter wrong on the size? Tap ONE single part on the photo — it re-counts using that size.
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="big" id="count">–</div>
+          <div class="detail" id="detail">Lay out the parts, then tap Count.</div>
+          <div class="adj"><button onclick="adjust(-1)">−</button><button onclick="adjust(1)">+</button></div>
+          <button class="btn go" id="btnCount" onclick="shoot()" disabled>📷 Count</button>
+          <button class="btn sec" id="btnRetake" onclick="retake()" style="display:none">↺ Retake</button>
+          <label class="btn sec" id="btnFile" style="display:block;text-align:center;cursor:pointer">
+            🖼 Use a photo<input type="file" accept="image/*" style="display:none" onchange="fromFile(this)"></label>
+        </div>
+        <div class="card"><details ${CS.pol !== "auto" || CS.thr || CS.minp !== 15 || !CS.edge ? "open" : ""}>
+          <summary>Counting settings</summary>
+          <div class="label">Parts vs background</div>
+          <div class="seg" id="pol">
+            ${[["auto", "Auto"], ["dark", "Dark parts<br>light tray"], ["light", "Light parts<br>dark tray"]].map(([v, t]) =>
+              `<button data-v="${v}" class="${CS.pol === v ? "on" : ""}" onclick="setPol('${v}')">${t}</button>`).join("")}
+          </div>
+          <div class="ctl">Sensitivity <input type="range" min="-60" max="60" value="${CS.thr}" oninput="CS.thr=+this.value;document.getElementById('thrv').textContent=this.value;C.adj=0;runCount()"><span class="v" id="thrv">${CS.thr}</span></div>
+          <div class="ctl">Ignore smaller than <input type="range" min="1" max="60" value="${CS.minp}" oninput="CS.minp=+this.value;document.getElementById('minpv').textContent=this.value+'%';C.adj=0;runCount()"><span class="v" id="minpv">${CS.minp}%</span></div>
+          <div class="ctl"><label><input type="checkbox" ${CS.edge ? "checked" : ""} onchange="CS.edge=this.checked;C.adj=0;runCount()"> Ignore anything touching the photo edge</label></div>
+        </details></div>
+      </div>
+    </div></main>
+    <div class="bar"><div class="inner">
+      <button class="btn sec" style="width:auto;padding:16px 22px" onclick="${j.back}">Cancel</button>
+      <button class="btn go" id="btnSave" onclick="saveCount()" disabled>✓ Save count</button>
+    </div></div>`);
+  document.getElementById("out").addEventListener("click", tapPart);
+  if (C.shot && C.frame) {            // back from "Not confirmed" — show the same count again
+    document.getElementById("viewmsg").style.display = "none";
+    document.getElementById("btnCount").style.display = "none";
+    document.getElementById("btnRetake").style.display = "block";
+    if (cv) { draw(); showCount(); }
+  }
+  if (C.stream) attachStream();
+}
+function setPol(v) {
+  CS.pol = v;
+  document.querySelectorAll("#pol button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  C.adj = 0; runCount();
+}
+async function startCam() {
+  if (C.stream) { attachStream(); return; }
+  try {
+    C.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    if (S.screen !== "camera") { stopCam(); return; }
+    attachStream();
+    const b = document.getElementById("btnCount"); if (b) b.disabled = !cv;
+  } catch (e) {
+    const m = document.getElementById("viewmsg");
+    if (m) m.innerHTML = "Camera not available (" + esc(e.name || e) + ").<br><br>Use “Use a photo”.";
+  }
+}
+function attachStream() {
+  const v = document.getElementById("video"); if (!v || !C.stream) return;
+  if (v.srcObject !== C.stream) { v.srcObject = C.stream; v.play().catch(() => {}); }
+  if (!C.shot) { v.style.display = "block"; const m = document.getElementById("viewmsg"); if (m) m.style.display = "none"; }
+}
+function stopCam() {
+  if (C.stream) { C.stream.getTracks().forEach(t => t.stop()); C.stream = null; }
+}
+function grabToCanvas(srcEl, w, h) {
+  const sc = Math.min(1, MAX_W / w);
+  const c = document.createElement("canvas");
+  c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+  c.getContext("2d").drawImage(srcEl, 0, 0, c.width, c.height);
+  return c;
+}
+function frozen() {
+  C.shot = true; C.refArea = null; C.adj = 0; S.ref = newRef();   // new count = new reference
+  document.getElementById("video").style.display = "none";
+  document.getElementById("viewmsg").style.display = "none";
+  document.getElementById("btnCount").style.display = "none";
+  document.getElementById("btnRetake").style.display = "block";
+}
+function shoot() {
+  const v = document.getElementById("video");
+  if (!cv || !C.stream || !v.videoWidth) return;
+  C.frame = grabToCanvas(v, v.videoWidth, v.videoHeight);
+  frozen(); runCount();
+}
+function retake() {
+  C.frame = null; C.shot = false; C.adj = 0; C.blobs = []; S.ref = null;
+  document.getElementById("out").style.display = "none";
+  document.getElementById("btnCount").style.display = "block";
+  document.getElementById("btnRetake").style.display = "none";
+  document.getElementById("count").textContent = "–";
+  document.getElementById("detail").textContent = "Lay out the parts, then tap Count.";
+  document.getElementById("btnSave").disabled = true;
+  if (C.stream) attachStream();
+  else { const m = document.getElementById("viewmsg"); m.style.display = "block"; }
+}
+function fromFile(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => {
+    C.frame = grabToCanvas(img, img.naturalWidth, img.naturalHeight);
+    URL.revokeObjectURL(img.src);
+    frozen(); if (cv) runCount();
+  };
+  img.src = URL.createObjectURL(f);
+  inp.value = "";
+}
+
+// 1 grey+blur · 2 Otsu threshold (+ sensitivity) · 3 parts = minority colour ·
+// 4 clean-up · 5 outer outlines · 6 one part = median size (or the tapped part) ·
+// 7 each blob = round(area / one-part size)
+function runCount() {
+  if (!cv || !C.frame) return;
+  const src = cv.imread(C.frame), gray = new cv.Mat(), bin = new cv.Mat();
+  const k3 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
+  const k5 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+  const contours = new cv.MatVector(), hier = new cv.Mat();
+  try {
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+    const otsu = cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+    const t = Math.max(1, Math.min(254, otsu + CS.thr));
+    let inv;
+    if (CS.pol === "dark") inv = true;
+    else if (CS.pol === "light") inv = false;
+    else { cv.threshold(gray, bin, t, 255, cv.THRESH_BINARY); inv = cv.countNonZero(bin) > bin.rows * bin.cols / 2; }
+    cv.threshold(gray, bin, t, 255, inv ? cv.THRESH_BINARY_INV : cv.THRESH_BINARY);
+    cv.morphologyEx(bin, bin, cv.MORPH_OPEN, k3);
+    cv.morphologyEx(bin, bin, cv.MORPH_CLOSE, k5);
+    cv.findContours(bin, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    const W = bin.cols, H = bin.rows, noise = W * H * 0.00003;
+    const blobs = [];
+    for (let i = 0; i < contours.size(); i++) {
+      const c = contours.get(i), a = cv.contourArea(c), r = cv.boundingRect(c);
+      if (a >= noise) {
+        const edge = r.x <= 1 || r.y <= 1 || r.x + r.width >= W - 1 || r.y + r.height >= H - 1;
+        if (!(CS.edge && edge)) { const m = cv.moments(c); blobs.push({ a, r, cx: m.m10 / m.m00, cy: m.m01 / m.m00 }); }
+      }
+      c.delete();
+    }
+    const sizes = blobs.map(b => b.a).sort((x, y) => x - y);
+    const big = sizes.filter(a => a >= (sizes[sizes.length - 1] || 0) * 0.02);
+    const ref = C.refArea || (big.length ? big[Math.floor(big.length / 2)] : 0);
+    let total = 0, multi = 0, ignored = 0;
+    blobs.forEach(b => {
+      b.n = b.a < ref * CS.minp / 100 ? 0 : Math.max(1, Math.round(b.a / ref));
+      total += b.n; if (b.n > 1) multi++; if (!b.n) ignored++;
+    });
+    blobs.sort((p, q) => (Math.round(p.cy / 40) - Math.round(q.cy / 40)) || (p.cx - q.cx));
+    C.blobs = blobs; C.auto = total;
+    C.detail = `${blobs.length - ignored} part shapes found` +
+      (multi ? ` · <b style="color:#E65100">${multi} counted as 2+ — check</b>` : "") +
+      (ignored ? ` · ${ignored} too small, ignored` : "") + (C.refArea ? " · size set by tap" : "");
+    draw(); showCount();
+  } finally {
+    src.delete(); gray.delete(); bin.delete(); k3.delete(); k5.delete(); contours.delete(); hier.delete();
+  }
+}
+function draw() {
+  const f = C.frame, out = document.getElementById("out"); if (!out) return;
+  out.width = f.width; out.height = f.height;
+  const g = out.getContext("2d");
+  g.drawImage(f, 0, 0);
+  const R = Math.max(10, Math.round(f.width / 70));
+  let n = 0;
+  g.textAlign = "center"; g.textBaseline = "middle";
+  C.blobs.forEach(b => {
+    const col = b.n === 0 ? "#9E9E9E" : b.n > 1 ? "#E65100" : "#2E7D32";
+    g.lineWidth = 2; g.strokeStyle = col; g.strokeRect(b.r.x, b.r.y, b.r.width, b.r.height);
+    g.beginPath(); g.arc(b.cx, b.cy, R, 0, Math.PI * 2); g.fillStyle = col; g.fill();
+    g.lineWidth = 2; g.strokeStyle = "#fff"; g.stroke();
+    g.fillStyle = "#fff"; g.font = `bold ${Math.round(R * (b.n > 1 ? 0.9 : 1.05))}px Arial`;
+    if (b.n === 0) g.fillText("×", b.cx, b.cy);
+    else { n += b.n; g.fillText(b.n > 1 ? "×" + b.n : String(n), b.cx, b.cy); }
+  });
+  out.style.display = "block";
+}
+const finalCount = () => Math.max(0, C.auto + C.adj);
+function showCount() {
+  const el = document.getElementById("count"); if (!el) return;
+  if (!C.frame || !cv) { el.textContent = "–"; return; }
+  el.textContent = finalCount();
+  document.getElementById("detail").innerHTML = (C.detail || "") +
+    (C.adj ? ` · <b>${C.adj > 0 ? "+" : ""}${C.adj} by hand</b>` : "");
+  document.getElementById("btnSave").disabled = false;
+}
+function adjust(d) { if (!C.frame || !cv) return; C.adj += d; showCount(); }
+function tapPart(ev) {
+  if (!C.blobs.length) return;
+  const out = ev.currentTarget, rc = out.getBoundingClientRect();
+  const x = (ev.clientX - rc.left) * out.width / rc.width, y = (ev.clientY - rc.top) * out.height / rc.height;
+  const hit = C.blobs.find(b => x >= b.r.x && x <= b.r.x + b.r.width && y >= b.r.y && y <= b.r.y + b.r.height);
+  if (hit) { C.refArea = hit.a; C.adj = 0; runCount(); }
+}
+
+// ─── 7. SAVE — one database call; safe to repeat (same reference = not saved twice)
+async function saveCount() {
+  if (!C.frame || !S.ref) return;
+  const j = S.job, counted = finalCount();
+  if (j.mode === "RECEIVING" && counted > j.outstanding &&
+      !confirm(`${counted} counted but only ${j.outstanding} outstanding on this line.\n\nSave the count anyway? (More than ordered is booked on the laptop.)`)) return;
+  // the proof photo is made now, before the screen changes
+  j.photo = await photoBlob().catch(() => null);
+  j.counted = counted; j.camera = C.auto;
+  submitCount();
+}
+async function submitCount() {
+  const j = S.job;
+  S.screen = "saving"; render();
+  try {
+    const { data, error } = await withTimeout(db.rpc("tablet_save_count", {
+      p_username: S.user.username, p_pin: S.pin, p_mode: j.mode,
+      p_stock_item_id: j.stock_item_id || null, p_po_number: j.po_number || null,
+      p_line_ref: j.line_ref || null, p_delivery_note: j.mode === "RECEIVING" ? S.dn.trim() : null,
+      p_counted: j.counted, p_camera: j.camera, p_client_ref: S.ref }), CALL_TIMEOUT * 1.5);
+    if (error) throw error;
+    if (!data.ok) { S.err = data.error || "Not saved."; S.screen = "unsure"; S.notSaved = true; return render(); }
+    S.result = data; S.screen = "done"; render();
+    if (data.want_photo && j.photo) uploadPhoto(data.id, j.photo);   // background — nobody waits
+  } catch (e) { S.err = String(e.message || e); S.notSaved = false; S.screen = "unsure"; render(); }
+}
+function photoBlob() {      // ~1024 px JPEG of the counted photo with the dots (~60–100 KB)
+  return new Promise((resolve, reject) => {
+    const out = document.getElementById("out"); if (!out || !out.width) return resolve(null);
+    const sc = Math.min(1, 1024 / out.width);
+    const c = document.createElement("canvas");
+    c.width = Math.round(out.width * sc); c.height = Math.round(out.height * sc);
+    c.getContext("2d").drawImage(out, 0, 0, c.width, c.height);
+    c.toBlob(b => b ? resolve(b) : reject(new Error("no photo")), "image/jpeg", 0.7);
+  });
+}
+async function uploadPhoto(id, blob) {
+  try {
+    const d = new Date();
+    const path = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${id}.jpg`;
+    const up = await withTimeout(db.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: false }), 60000);
+    if (up.error && !/exists|duplicate/i.test(up.error.message || "")) throw up.error;
+    await withTimeout(db.rpc("tablet_count_photo", { p_username: S.user ? S.user.username : "", p_pin: S.pin, p_id: id, p_path: path }));
+  } catch (e) { console.warn("[count] photo not uploaded:", e); }   // the count itself is saved
+}
+function rSaving() { $(header("Saving…", S.job.title) + `<div class="spin">⏳ Saving the count — please wait…</div>`); }
+function rUnsure() {
+  $(header(S.notSaved ? "Not saved" : "Not confirmed", S.job.title) + `<main>
+    ${S.notSaved ? `<div class="err"><b>The count was NOT saved.</b>\n${esc(S.err)}</div>`
+      : `<div class="warn"><b>The tablet did not get an answer.</b>\n${esc(S.err)}\n
+The count may or may not have been saved. Tap “Try again” — if it was already saved
+it will NOT be saved a second time.</div>`}
+    </main><div class="bar"><div class="inner">
+      <button class="btn sec" onclick="S.screen='camera';render();startCam()">Back to the count</button>
+      ${S.notSaved ? "" : `<button class="btn go" onclick="submitCount()">Try again</button>`}</div></div>`);
+}
+function rDone() {
+  const j = S.job, r = S.result;
+  if (j.mode === "RECEIVING") {
+    const diff = j.counted - j.outstanding;
+    $(header("Count logged", j.sub) + `<main><div class="done">
+      <div style="font-size:18px;color:var(--muted)">${esc(j.title)}</div>
+      <div class="bookit">${j.counted}</div>
+      <div style="font-size:18px">Book <b>${j.counted}</b> for line ${esc(j.line_ref)} in <b>Book Arrival</b>.</div>
+      <div style="color:var(--muted);margin-top:8px">Outstanding on the line: ${j.outstanding}${
+        diff < 0 ? ` · <b style="color:var(--amber)">${-diff} short</b>` : diff > 0 ? ` · <b style="color:var(--red)">${diff} more than outstanding</b>` : " · complete"}</div>
+      <div style="color:var(--muted);margin-top:14px">${r.duplicate ? "This count was already saved — not saved twice. " : ""}The count is logged only; nothing is booked here.</div>
+    </div></main>
+    <div class="bar"><div class="inner">
+      <button class="btn sec" onclick="goHome()">Done</button>
+      <button class="btn go" onclick="S.screen='lines';render()">Count another line</button></div></div>`);
+  } else {
+    $(header("Count saved", j.sub) + `<main><div class="done">
+      <div class="tickbig">✓</div>
+      <div style="font-size:18px;color:var(--muted)">${esc(j.title)}</div>
+      <div class="bookit">${j.counted}</div>
+      <div style="color:var(--muted);font-size:16px">${r.duplicate ? "This count was already saved — not saved twice.<br>" : ""}
+        Sent to the Stock Count on the laptop for the floor manager to accept.</div>
+    </div></main>
+    <div class="bar"><div class="inner">
+      <button class="btn sec" onclick="goHome()">Done</button>
+      <button class="btn go" onclick="${j.back.startsWith("openRecounts") ? "openRecounts()" : "nextItem()"}">Count the next part</button></div></div>`);
+    // mark it on the list without reloading
+    if (S.items && j.stock_item_id) S.open[j.stock_item_id] = { status: "Counted", counted_at: new Date().toISOString(), counted_by: S.user.username };
+  }
+}
+function nextItem() { S.screen = "items"; render(); }
+
+loadUsers();
+</script>
+</body>
+</html>
 
