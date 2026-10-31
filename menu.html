@@ -7,13 +7,16 @@
 <title>Rippel Matrix — Tablet Menu</title>
 <link rel="manifest" href="manifest.json">
 <!-- ─────────────────────────────────────────────────────────────────────────
-  menu.html — front page on the tablets (v1.1, 25 Oct 2026)
+  menu.html — front page on the tablets (v1.2, 31 Oct 2026)
   v1.1: logo block removed (white box looked cramped) — title text only.
+  v1.2: tile 3 Component Count → count.html (camera count: receiving count
+        aid + stock take). Tiles 1 and 2 unchanged.
   Lives in the Blue Card repo (bluecardpwa) next to index.html.
   manifest.json start_url points here, so the tablet icon opens this menu:
     1. Blue Card System  → index.html   (unchanged)
     2. Goods Receiving   → receiving.html
-  ?env=test is passed on to Goods Receiving (Blue Card has no TEST).
+    3. Component Count   → count.html
+  ?env=test is passed on to Goods Receiving and Component Count (Blue Card has no TEST).
 ──────────────────────────────────────────────────────────────────────────── -->
 <!-- ── SITE ACCESS GATE (same as index.html — see js/sitegate.js) ── -->
 <style>
@@ -71,6 +74,7 @@
     justify-content:center; font-size:26px; font-weight:800; }
   .t1 .num{ background:#1a6cf0; }
   .t2 .num{ background:#1B5E20; }
+  .t3 .num{ background:#4E342E; }
   .name{ font-size:21px; font-weight:800; }
   .what{ color:#8fa3c0; font-size:14px; margin-top:4px; line-height:1.35; }
   .foot{ color:#4a6a8a; font-size:11px; margin-top:34px; text-align:center; }
@@ -78,8 +82,8 @@
 </head>
 <body>
 <div class="wrap">
-  <span class="file">menu.html v1.1</span>
-  <div class="test" id="testbar" hidden>⚠ TEST MODE — Goods Receiving uses the TEST database</div>
+  <span class="file">menu.html v1.2</span>
+  <div class="test" id="testbar" hidden>⚠ TEST MODE — Goods Receiving and Component Count use the TEST database</div>
   <div class="brand">RIPPEL EFFECT SYSTEMS</div>
   <h1>RIPPEL <span>MATRIX</span></h1>
   <div class="sub">Integrated Manufacturing &amp; Production Management System · Floor tablet</div>
@@ -95,6 +99,11 @@
       <div><div class="name">Goods Receiving</div>
         <div class="what">Book arrivals against a PO with your Matrix PIN</div></div>
     </a>
+    <a class="tile t3" href="count.html" id="go-count">
+      <div class="num">3</div>
+      <div><div class="name">Component Count</div>
+        <div class="what">Count parts with the camera — receiving count or stock take</div></div>
+    </a>
   </div>
 
   <div class="foot">Use the tablet's back button to return to this menu.</div>
@@ -105,9 +114,10 @@
 <script src="js/sitegate.js?v=1.22"></script>
 <script>
   (function () {
-    // carry ?env=test through to Goods Receiving (Blue Card is LIVE only)
+    // carry ?env=test through to Goods Receiving and Component Count (Blue Card is LIVE only)
     if (/(^|[?&])env=test(&|$)/i.test(location.search)) {
       document.getElementById('go-receiving').href = 'receiving.html?env=test';
+      document.getElementById('go-count').href = 'count.html?env=test';
       document.getElementById('testbar').hidden = false;
     }
   })();
