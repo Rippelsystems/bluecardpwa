@@ -5,7 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Rippel Matrix — Component Count</title>
 <!-- ─────────────────────────────────────────────────────────────────────────
-  count.html — Component Count on the tablet (v1.0, 31 Oct 2026)
+  count.html — Component Count on the tablet (v1.1, 31 Oct 2026)
+  v1.1: PART SHAPES (part_shapes_31Oct.sql). Count, tap ONE part on the
+        photo, "Save as the shape" — from then on that part is counted by
+        its shape: only outlines that match (outline + proportions + size)
+        are counted, everything else is shown grey ✕ "not this part".
+        ◆ next to each part on the lists = a shape is saved.
+        Re-teach any time (replaces the shape). One part type per tray —
+        parts that look alike (same outline, nearly the same size) cannot
+        be told apart reliably by the camera.
   Lives in the Blue Card repo (bluecardpwa) next to menu.html, behind the
   same site password. LIVE by default; ?env=test uses the TEST database.
   Needs stock_take_counts_31Oct.sql on the database first.
@@ -134,6 +142,10 @@
   .badge{ font-size:12px; font-weight:700; padding:5px 10px; border-radius:14px; color:#fff; white-space:nowrap; }
   .b-done{ background:var(--green); } .b-rec{ background:var(--amber); } .b-grey{ background:#ECEFF1; color:var(--text); }
   .b-open{ background:#1565C0; } .b-back{ background:var(--amber); }
+  .b-shape{ background:#00695C; } .b-noshape{ background:#ECEFF1; color:#90A4AE; }
+  .shapebox{ display:flex; gap:12px; align-items:center; }
+  .shapebox img{ width:64px; height:64px; object-fit:contain; background:#000; border-radius:8px; flex:0 0 64px; }
+  .teach{ background:#00695C; color:#fff; }
 
   /* camera */
   .cgrid{ display:grid; grid-template-columns:1fr 320px; gap:16px; }
@@ -180,7 +192,7 @@
 // ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
 // LIVE = the Blue Card connection (js/supabase.js). ?env=test = TEST database
 // (same TEST connection as receiving.html).
-const CNT_VERSION = "1.0";
+const CNT_VERSION = "1.1";
 const CNT_TEST = /(^|[?&])env=test(&|$)/i.test(location.search);
 const CNT_TEST_URL = "https://wtkbsvopuvtxiprjtqqx.supabase.co";
 const CNT_TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0a2Jzdm9wdXZ0eGlwcmp0cXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTUzNjIsImV4cCI6MjA5NjE3MTM2Mn0.q3cRrSbgmgzaw9PzHEuXaic-3Cl-JAiAPVbZnyoY8SQ";
@@ -212,7 +224,8 @@ const S = {
   // receiving
   pos: null, posErr: "", poSearch: "", po: null, lines: null, linesErr: "", dn: "",
   // the count in hand
-  job: null,          // {mode, stock_item_id, title, sub, po_number, line_ref, outstanding}
+  job: null,          // {mode, stock_item_id, title, sub, po_number, line_ref, outstanding, code, name}
+  shapes: {}, shapesByCode: {}, shapesLoaded: false,   // v1.1 — part_shapes (no outline points)
   ref: null, result: null, err: "",
 };
 
@@ -263,6 +276,37 @@ async function readAll(build) {     // Supabase sends max 1,000 rows per call �
     if (!data || data.length < 1000) break;
   }
   return out;
+}
+
+// ─── PART SHAPES (v1.1) ──────────────────────────────────────────────────────
+// key = part number | description, upper case (as the database builds it)
+const shapeKey = (code, name) => String(code || "").trim().toUpperCase() + "|" + String(name || "").trim().toUpperCase();
+async function loadShapes() {
+  try {
+    const rows = await readAll(() => db.from("part_shapes")
+      .select("id, shape_key, stock_code, item_name, taught_by, taught_at").order("id"));
+    S.shapes = {}; S.shapesByCode = {};
+    rows.forEach(r => {
+      S.shapes[r.shape_key] = r;
+      const c = String(r.stock_code || "").trim().toUpperCase();
+      (S.shapesByCode[c] = S.shapesByCode[c] || []).push(r);
+    });
+    S.shapesLoaded = true;
+  } catch (e) { S.shapesLoaded = false; console.warn("[count] shapes not read:", e); }
+}
+// exact part + description first; else the only shape saved for that part number
+function findShape(code, name) {
+  const exact = S.shapes[shapeKey(code, name)];
+  if (exact) return { row: exact, exact: true };
+  const list = S.shapesByCode[String(code || "").trim().toUpperCase()] || [];
+  if (list.length === 1) return { row: list[0], exact: false };
+  return null;
+}
+function shapeBadge(code, name) {
+  if (!S.shapesLoaded) return "";
+  const f = findShape(code, name);
+  return f ? `<span class="badge b-shape" title="Shape saved">◆ shape</span>`
+           : `<span class="badge b-noshape" title="No shape saved yet">◇ no shape</span>`;
 }
 
 // idle logout (shared tablet)
@@ -340,7 +384,7 @@ async function pinKey(d) {
     if (!data.ok) { S.pin = ""; S.pinErr = "Incorrect PIN — try again."; return render(); }
     if (!data.can_count) { S.pin = ""; S.pinErr = `${data.role} may not count on the tablet.`; return render(); }
     S.user = { username: data.username, role: data.role };
-    touch(); loadSuffixes(); goHome();
+    touch(); loadSuffixes(); loadShapes(); goHome();
   } catch (e) { S.pin = ""; S.pinErr = "Could not check the PIN: " + (e.message || e); render(); }
 }
 async function loadSuffixes() {    // optional — the built-in list stays if this fails
@@ -407,6 +451,7 @@ async function openItems() {
         || String(a.shelf_no || "").localeCompare(String(z.shelf_no || ""), undefined, { numeric: true })
         || String(a.item_name || "").localeCompare(String(z.item_name || "")));
     await loadOpenCounts(S.items.map(r => r.id));
+    await loadShapes();
   } catch (e) { S.items = []; S.itemsErr = "Could not load the parts: " + (e.message || e); }
   render();
 }
@@ -435,7 +480,7 @@ function itemsHTML() {
     return `<div class="card row" onclick="countItem(${Number(r.id)})">
       <div class="grow"><div class="main">${esc(r.item_name || "")}</div>
         <div class="meta">${esc(r.stock_code || "—")}${r.shelf_no ? " · shelf " + esc(r.shelf_no) : ""}${S.product === "All" && r.product ? " · " + esc(r.product) : ""}</div></div>
-      ${badge}</div>`;
+      ${shapeBadge(r.stock_code, r.item_name)} ${badge}</div>`;
   }).join("") + (list.length > 200 ? `<div class="empty">${list.length - 200} more — type more of the name or part number</div>` : "");
 }
 function rItems() {
@@ -450,6 +495,7 @@ function countItem(id) {
   const r = (S.items || []).find(x => Number(x.id) === id); if (!r) return;
   const o = S.open[r.id];
   S.job = { mode: "STOCK_TAKE", stock_item_id: r.id, title: r.item_name || r.stock_code,
+            code: r.stock_code, name: r.item_name,
             sub: `${r.stock_code || ""} · ${r.storeroom || ""}${r.shelf_no ? " · shelf " + r.shelf_no : ""}`,
             note: o ? (o.status === "Recount"
                        ? `Recount asked${o.review_note ? ": " + o.review_note : ""}. Your new count replaces the old one.`
@@ -477,13 +523,14 @@ function rRecounts() {
     : S.recounts.map((r, i) => `<div class="card row" onclick="countRecount(${i})">
         <div class="grow"><div class="main">${esc(r.item_name || "")}</div>
           <div class="meta">${esc(r.stock_code || "—")} · ${esc(r.storeroom || "")} · asked by ${esc(r.reviewed_by || "?")}${r.review_note ? " — " + esc(r.review_note) : ""}</div></div>
-        <span class="badge b-rec">↻ Recount</span></div>`).join("");
+        ${shapeBadge(r.stock_code, r.item_name)} <span class="badge b-rec">↻ Recount</span></div>`).join("");
   $(header("Recounts", "Sent back by the floor manager", "goHome()") + `<main>
     ${S.recountsErr ? `<div class="err">${esc(S.recountsErr)}</div>` : ""}${list}</main>`);
 }
 function countRecount(i) {
   const r = S.recounts[i];
   S.job = { mode: "STOCK_TAKE", stock_item_id: r.stock_item_id, title: r.item_name || r.stock_code,
+            code: r.stock_code, name: r.item_name,
             sub: `${r.stock_code || ""} · ${r.storeroom || ""}`,
             note: `Recount asked by ${r.reviewed_by || "?"}${r.review_note ? ": " + r.review_note : ""}.`,
             back: "openRecounts()" };
@@ -544,7 +591,7 @@ function rLines() {
         <div class="grow"><div class="meta">${esc(l.line_ref)} · ${esc(l.internal_part_no || "—")}</div>
           <div class="main">${esc(l.description || "")}</div>
           <div class="meta">Ordered <b>${num(l.qty_ordered)}</b> · Received <b>${num(l.qty_received)}</b> · Outstanding <b>${outstanding(l)}</b></div></div>
-        <span class="badge b-open">📷 Count</span></div>`).join("");
+        ${shapeBadge(l.internal_part_no, l.description)} <span class="badge b-open">📷 Count</span></div>`).join("");
   $(header(S.po.po_number, `${S.po.supplier || ""} — tap the line you are counting`, "openPOs()") + `<main>
     ${S.linesErr ? `<div class="err">${esc(S.linesErr)}</div>` : ""}
     <div class="label">Delivery note (optional — saved with the count)</div>
@@ -555,6 +602,7 @@ function countLine(i) {
   const l = S.lines[i];
   S.job = { mode: "RECEIVING", po_number: S.po.po_number, line_ref: l.line_ref,
             title: l.description || l.internal_part_no, outstanding: outstanding(l),
+            code: l.internal_part_no, name: l.description,
             sub: `${S.po.po_number} · ${l.line_ref} · ${l.internal_part_no || ""}`,
             note: `Outstanding on this line: ${outstanding(l)}. The count is only an aid — book it in Book Arrival.`,
             back: "S.screen='lines';render()" };
@@ -590,15 +638,18 @@ function loadCv() {
 }
 
 // counting settings stay for the session (same tray, same light)
-const CS = { pol: "auto", thr: 0, minp: 15, edge: true };
-const C = { stream: null, frame: null, blobs: [], auto: 0, adj: 0, refArea: null, detail: "", shot: false };
+const CS = { pol: "auto", thr: 0, minp: 15, edge: true, strict: 20, sizeOn: true, sizeTol: 25 };
+const C = { stream: null, frame: null, blobs: [], auto: 0, adj: 0, refArea: null, detail: "", shot: false,
+            selPt: null, sel: null };
+let SHAPE = null;         // the shape in use for this count (full row with outline points) — v1.1
 const MAX_W = 1280;
 
 function openCamera() {
-  Object.assign(C, { frame: null, blobs: [], auto: 0, adj: 0, refArea: null, detail: "", shot: false });
-  S.ref = null; S.err = "";
+  Object.assign(C, { frame: null, blobs: [], auto: 0, adj: 0, refArea: null, detail: "", shot: false, selPt: null, sel: null });
+  S.ref = null; S.err = ""; SHAPE = null;
   S.screen = "camera"; render();
   startCam();
+  loadJobShape();
   loadCv().then(() => { const b = document.getElementById("btnCount"); if (b) b.disabled = !C.stream; const w = document.getElementById("cvwarn"); if (w) w.remove(); if (C.frame) runCount(); })
           .catch(e => { const w = document.getElementById("cvwarn"); if (w) { w.className = "err"; w.textContent = e.message || String(e); } });
 }
@@ -607,6 +658,7 @@ function rCamera() {
   $(header(j.title, j.sub, j.back) + `<main>
     ${cv ? "" : `<div id="cvwarn" class="info">Loading the counting engine (first time ~10 MB)…</div>`}
     ${j.note ? `<div class="info">${esc(j.note)}</div>` : ""}
+    <div class="card" id="shapebox">${shapeBoxHTML()}</div>
     <div class="cgrid">
       <div>
         <div class="view">
@@ -616,9 +668,9 @@ function rCamera() {
         </div>
         <div class="legend">
           <span class="ldot" style="background:#2E7D32"></span>counted as 1 &nbsp;
-          <span class="ldot" style="background:#E65100"></span>bigger blob counted as 2+ — check &nbsp;
-          <span class="ldot" style="background:#9E9E9E"></span>too small, ignored<br>
-          Counter wrong on the size? Tap ONE single part on the photo — it re-counts using that size.
+          <span class="ldot" style="background:#E65100"></span>parts touching, counted as 2+ — check &nbsp;
+          <span class="ldot" style="background:#9E9E9E"></span>not counted (too small / not this part)<br>
+          Tap ONE single part on the photo to select it — then you can save it as this part's shape.
         </div>
       </div>
       <div>
@@ -628,10 +680,11 @@ function rCamera() {
           <div class="adj"><button onclick="adjust(-1)">−</button><button onclick="adjust(1)">+</button></div>
           <button class="btn go" id="btnCount" onclick="shoot()" disabled>📷 Count</button>
           <button class="btn sec" id="btnRetake" onclick="retake()" style="display:none">↺ Retake</button>
+          <button class="btn teach" id="btnTeach" onclick="teachShape()" style="display:none">◆ Save as the shape</button>
           <label class="btn sec" id="btnFile" style="display:block;text-align:center;cursor:pointer">
             🖼 Use a photo<input type="file" accept="image/*" style="display:none" onchange="fromFile(this)"></label>
         </div>
-        <div class="card"><details ${CS.pol !== "auto" || CS.thr || CS.minp !== 15 || !CS.edge ? "open" : ""}>
+        <div class="card"><details ${CS.pol !== "auto" || CS.thr || CS.minp !== 15 || !CS.edge || CS.strict !== 20 || !CS.sizeOn || CS.sizeTol !== 25 ? "open" : ""}>
           <summary>Counting settings</summary>
           <div class="label">Parts vs background</div>
           <div class="seg" id="pol">
@@ -641,6 +694,11 @@ function rCamera() {
           <div class="ctl">Sensitivity <input type="range" min="-60" max="60" value="${CS.thr}" oninput="CS.thr=+this.value;document.getElementById('thrv').textContent=this.value;C.adj=0;runCount()"><span class="v" id="thrv">${CS.thr}</span></div>
           <div class="ctl">Ignore smaller than <input type="range" min="1" max="60" value="${CS.minp}" oninput="CS.minp=+this.value;document.getElementById('minpv').textContent=this.value+'%';C.adj=0;runCount()"><span class="v" id="minpv">${CS.minp}%</span></div>
           <div class="ctl"><label><input type="checkbox" ${CS.edge ? "checked" : ""} onchange="CS.edge=this.checked;C.adj=0;runCount()"> Ignore anything touching the photo edge</label></div>
+          <div class="label">With a saved shape</div>
+          <div class="ctl">Shape strictness <input type="range" min="5" max="60" value="${65 - CS.strict}" oninput="CS.strict=65-this.value;document.getElementById('strv').textContent=this.value;C.adj=0;runCount()"><span class="v" id="strv">${65 - CS.strict}</span></div>
+          <div class="ctl"><label><input type="checkbox" ${CS.sizeOn ? "checked" : ""} onchange="CS.sizeOn=this.checked;C.adj=0;runCount()"> Size must match</label>
+            <input type="range" min="10" max="50" value="${CS.sizeTol}" oninput="CS.sizeTol=+this.value;document.getElementById('sztv').textContent='±'+this.value+'%';C.adj=0;runCount()"><span class="v" id="sztv">±${CS.sizeTol}%</span></div>
+          <div class="legend">Size only works when the tablet is always the same height above the tray (on its stand).</div>
         </details></div>
       </div>
     </div></main>
@@ -653,7 +711,7 @@ function rCamera() {
     document.getElementById("viewmsg").style.display = "none";
     document.getElementById("btnCount").style.display = "none";
     document.getElementById("btnRetake").style.display = "block";
-    if (cv) { draw(); showCount(); }
+    if (cv) { draw(); showCount(); showTeach(); }
   }
   if (C.stream) attachStream();
 }
@@ -692,6 +750,7 @@ function grabToCanvas(srcEl, w, h) {
 }
 function frozen() {
   C.shot = true; C.refArea = null; C.adj = 0; S.ref = newRef();   // new count = new reference
+  C.selPt = null; C.sel = null;
   document.getElementById("video").style.display = "none";
   document.getElementById("viewmsg").style.display = "none";
   document.getElementById("btnCount").style.display = "none";
@@ -704,7 +763,8 @@ function shoot() {
   frozen(); runCount();
 }
 function retake() {
-  C.frame = null; C.shot = false; C.adj = 0; C.blobs = []; S.ref = null;
+  C.frame = null; C.shot = false; C.adj = 0; C.blobs = []; S.ref = null; C.selPt = null; C.sel = null;
+  showTeach();
   document.getElementById("out").style.display = "none";
   document.getElementById("btnCount").style.display = "block";
   document.getElementById("btnRetake").style.display = "none";
@@ -749,33 +809,90 @@ function runCount() {
     cv.morphologyEx(bin, bin, cv.MORPH_CLOSE, k5);
     cv.findContours(bin, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
     const W = bin.cols, H = bin.rows, noise = W * H * 0.00003;
+    const shp = SHAPE;
+    if (shp && !refMats) refMats = [ptsMat(shp.pts, false), ptsMat(shp.pts, true)];
     const blobs = [];
     for (let i = 0; i < contours.size(); i++) {
       const c = contours.get(i), a = cv.contourArea(c), r = cv.boundingRect(c);
       if (a >= noise) {
         const edge = r.x <= 1 || r.y <= 1 || r.x + r.width >= W - 1 || r.y + r.height >= H - 1;
-        if (!(CS.edge && edge)) { const m = cv.moments(c); blobs.push({ a, r, cx: m.m10 / m.m00, cy: m.m01 / m.m00 }); }
+        if (!(CS.edge && edge)) {
+          const m = cv.moments(c);
+          const b = { a, r, cx: m.m10 / m.m00, cy: m.m01 / m.m00 };
+          measure(c, b);
+          if (shp) b.match = Math.min(cv.matchShapes(c, refMats[0], cv.CONTOURS_MATCH_I1, 0),
+                                      cv.matchShapes(c, refMats[1], cv.CONTOURS_MATCH_I1, 0));
+          blobs.push(b);
+        }
       }
       c.delete();
     }
-    const sizes = blobs.map(b => b.a).sort((x, y) => x - y);
-    const big = sizes.filter(a => a >= (sizes[sizes.length - 1] || 0) * 0.02);
-    const ref = C.refArea || (big.length ? big[Math.floor(big.length / 2)] : 0);
-    let total = 0, multi = 0, ignored = 0;
-    blobs.forEach(b => {
-      b.n = b.a < ref * CS.minp / 100 ? 0 : Math.max(1, Math.round(b.a / ref));
-      total += b.n; if (b.n > 1) multi++; if (!b.n) ignored++;
-    });
+    let total = 0, multi = 0, ignored = 0, notPart = 0;
+    if (shp) {
+      // a saved shape: count only the outlines that match it
+      const refA = shp.area * Math.pow(W / (shp.img_w || W), 2);
+      const lim = CS.strict / 100;
+      blobs.forEach(b => {
+        b.ratio = b.a / refA;
+        const shapeOK = b.match <= lim
+          && Math.abs(b.aspect - shp.aspect) / shp.aspect <= 0.25
+          && Math.abs(b.solidity - shp.solidity) <= 0.12;
+        const sizeOK = !CS.sizeOn || Math.abs(b.ratio - 1) <= CS.sizeTol / 100;
+        if (shapeOK && sizeOK) b.n = 1;
+        // same outline but the wrong size = a different (look-alike) part, never "touching"
+        else if (!shapeOK && b.ratio >= 1.6 && b.ratio <= 4.4) b.n = Math.round(b.ratio);   // parts touching
+        else { b.n = 0; b.notPart = b.ratio >= CS.minp / 100; }
+        total += b.n; if (b.n > 1) multi++; if (!b.n) { if (b.notPart) notPart++; else ignored++; }
+      });
+    } else {
+      const sizes = blobs.map(b => b.a).sort((x, y) => x - y);
+      const big = sizes.filter(a => a >= (sizes[sizes.length - 1] || 0) * 0.02);
+      const ref = C.refArea || (big.length ? big[Math.floor(big.length / 2)] : 0);
+      blobs.forEach(b => {
+        b.n = b.a < ref * CS.minp / 100 ? 0 : Math.max(1, Math.round(b.a / ref));
+        total += b.n; if (b.n > 1) multi++; if (!b.n) ignored++;
+      });
+    }
     blobs.sort((p, q) => (Math.round(p.cy / 40) - Math.round(q.cy / 40)) || (p.cx - q.cx));
     C.blobs = blobs; C.auto = total;
-    C.detail = `${blobs.length - ignored} part shapes found` +
-      (multi ? ` · <b style="color:#E65100">${multi} counted as 2+ — check</b>` : "") +
-      (ignored ? ` · ${ignored} too small, ignored` : "") + (C.refArea ? " · size set by tap" : "");
-    draw(); showCount();
+    C.sel = C.selPt ? blobs.find(b => inBox(b, C.selPt.x, C.selPt.y)) || null : null;
+    C.detail = shp
+      ? `◆ by shape: ${blobs.filter(b => b.n === 1).length} matched` +
+        (multi ? ` · <b style="color:#E65100">${multi} touching, counted as 2+ — check</b>` : "") +
+        (notPart ? ` · ${notPart} not this part` : "") + (ignored ? ` · ${ignored} too small` : "")
+      : `${blobs.length - ignored} part shapes found` +
+        (multi ? ` · <b style="color:#E65100">${multi} counted as 2+ — check</b>` : "") +
+        (ignored ? ` · ${ignored} too small, ignored` : "") + (C.refArea ? " · size set by tap" : "");
+    draw(); showCount(); showTeach();
   } finally {
     src.delete(); gray.delete(); bin.delete(); k3.delete(); k5.delete(); contours.delete(); hier.delete();
   }
 }
+
+// v1.1 — measurements of one outline: proportions, solidity, outline points
+function measure(c, b) {
+  const rr = cv.minAreaRect(c);
+  const L = Math.max(rr.size.width, rr.size.height), Sh = Math.max(1, Math.min(rr.size.width, rr.size.height));
+  b.aspect = L / Sh;
+  const hull = new cv.Mat();
+  cv.convexHull(c, hull, false, true);
+  b.solidity = Math.min(1, b.a / Math.max(1, cv.contourArea(hull)));
+  hull.delete();
+  const ap = new cv.Mat();
+  cv.approxPolyDP(c, ap, Math.max(1, 0.004 * cv.arcLength(c, true)), true);
+  const d = ap.data32S, pts = [];
+  for (let k = 0; k + 1 < d.length; k += 2) pts.push([Math.round(d[k] - b.cx), Math.round(d[k + 1] - b.cy)]);
+  ap.delete();
+  b.pts = pts;
+}
+let refMats = null;       // the saved outline (and its mirror image — a part may lie flipped over)
+function ptsMat(pts, mirror) {
+  const flat = [];
+  pts.forEach(([x, y]) => { flat.push(mirror ? -x : x, y); });
+  return cv.matFromArray(pts.length, 1, cv.CV_32SC2, flat);
+}
+function dropRefMats() { if (refMats) { refMats.forEach(m => { try { m.delete(); } catch (e) {} }); refMats = null; } }
+const inBox = (b, x, y) => x >= b.r.x && x <= b.r.x + b.r.width && y >= b.r.y && y <= b.r.y + b.r.height;
 function draw() {
   const f = C.frame, out = document.getElementById("out"); if (!out) return;
   out.width = f.width; out.height = f.height;
@@ -793,6 +910,11 @@ function draw() {
     if (b.n === 0) g.fillText("×", b.cx, b.cy);
     else { n += b.n; g.fillText(b.n > 1 ? "×" + b.n : String(n), b.cx, b.cy); }
   });
+  if (C.sel) {                       // v1.1 — the part tapped
+    const b = C.sel;
+    g.lineWidth = 5; g.strokeStyle = "#00B0FF";
+    g.strokeRect(b.r.x - 6, b.r.y - 6, b.r.width + 12, b.r.height + 12);
+  }
   out.style.display = "block";
 }
 const finalCount = () => Math.max(0, C.auto + C.adj);
@@ -809,8 +931,107 @@ function tapPart(ev) {
   if (!C.blobs.length) return;
   const out = ev.currentTarget, rc = out.getBoundingClientRect();
   const x = (ev.clientX - rc.left) * out.width / rc.width, y = (ev.clientY - rc.top) * out.height / rc.height;
-  const hit = C.blobs.find(b => x >= b.r.x && x <= b.r.x + b.r.width && y >= b.r.y && y <= b.r.y + b.r.height);
-  if (hit) { C.refArea = hit.a; C.adj = 0; runCount(); }
+  const hit = C.blobs.find(b => inBox(b, x, y));
+  if (!hit) return;
+  C.selPt = { x: hit.cx, y: hit.cy };
+  if (!SHAPE) C.refArea = hit.a;      // no shape yet: the tapped part also sets the size (as before)
+  C.adj = 0; runCount();
+}
+
+// ─── SHAPES on the camera screen (v1.1) ──────────────────────────────────────
+async function loadJobShape() {
+  const j = S.job; dropRefMats(); SHAPE = null; j.shapeInfo = null;
+  if (!S.shapesLoaded) await loadShapes();
+  const f = findShape(j.code, j.name);
+  if (!f) { drawShapeBox(); return; }
+  try {
+    const { data, error } = await withTimeout(db.from("part_shapes").select("*").eq("id", f.row.id).limit(1));
+    if (error) throw error;
+    if (!data || !data.length) { drawShapeBox(); return; }
+    if (S.screen !== "camera" || S.job !== j) return;
+    SHAPE = data[0]; j.shapeInfo = { exact: f.exact };
+    drawShapeBox(); loadShapePhoto();
+    if (C.frame && cv) { C.adj = 0; runCount(); }
+  } catch (e) { j.shapeErr = "Shape not read (" + (e.message || e) + ") — counting by size."; drawShapeBox(); }
+}
+function shapeBoxHTML() {
+  const j = S.job || {};
+  if (j.shapeErr) return `<div class="warn" style="margin:0">${esc(j.shapeErr)}</div>`;
+  if (!SHAPE) return `<div class="shapebox"><span class="badge b-noshape">◇ no shape</span>
+      <div style="color:var(--muted);font-size:14px">No shape saved for this part — counting by size.
+      To save one: tap <b>Count</b>, tap ONE single part on the photo, then <b>◆ Save as the shape</b>.</div></div>`;
+  const other = j.shapeInfo && !j.shapeInfo.exact
+    ? `<br><b style="color:var(--amber)">Shape saved under “${esc(SHAPE.item_name)}” (same part number) — check it is this part.</b>` : "";
+  return `<div class="shapebox"><img id="shapeimg" alt="" style="${SHAPE.photo_path ? "" : "display:none"}">
+      <div style="font-size:14px"><span class="badge b-shape">◆ shape</span>
+        Counting by the saved shape — only matching parts count.
+        <span style="color:var(--muted)">Saved ${esc(ddmm(SHAPE.taught_at))} ${esc(hhmm(SHAPE.taught_at))} by ${esc(SHAPE.taught_by || "?")}.
+        Wrong? Tap one part and ◆ Replace the shape.</span>${other}</div></div>`;
+}
+function drawShapeBox() { const b = document.getElementById("shapebox"); if (b) b.innerHTML = shapeBoxHTML(); if (SHAPE) loadShapePhoto(); }
+async function loadShapePhoto() {
+  const img = document.getElementById("shapeimg");
+  if (!img || !SHAPE || !SHAPE.photo_path) return;
+  try {
+    const { data } = await withTimeout(db.storage.from(PHOTO_BUCKET).createSignedUrl(SHAPE.photo_path, 3600));
+    if (data && data.signedUrl) { img.src = data.signedUrl; img.style.display = ""; }
+  } catch (e) { /* photo only */ }
+}
+function showTeach() {
+  const b = document.getElementById("btnTeach"); if (!b) return;
+  const ok = !!(C.sel && C.sel.pts && C.sel.pts.length >= 4 && S.job && S.job.code);
+  b.style.display = ok ? "block" : "none";
+  b.textContent = SHAPE ? "◆ Replace the shape with this part" : "◆ Save as the shape";
+}
+async function teachShape() {
+  const b = C.sel, j = S.job; if (!b || !j) return;
+  if (b.n > 1 && !confirm("This outline looks like more than one part (touching).\n\nSave it as the shape anyway?")) return;
+  if (SHAPE && !confirm(`Replace the saved shape of “${j.name || j.code}”?\n\nFrom now on this part is counted by the new shape.`)) return;
+  const btn = document.getElementById("btnTeach"); btn.disabled = true; btn.textContent = "Saving the shape…";
+  try {
+    const { data, error } = await withTimeout(db.rpc("tablet_save_shape", {
+      p_username: S.user.username, p_pin: S.pin, p_stock_code: j.code || "", p_item_name: j.name || "",
+      p_stock_item_id: j.stock_item_id || null, p_area: b.a, p_aspect: b.aspect, p_solidity: b.solidity,
+      p_img_w: C.frame.width, p_pts: b.pts }));
+    if (error) throw error;
+    if (!data.ok) throw new Error(data.error || "Shape not saved.");
+    const crop = await cropBlob(b).catch(() => null);
+    SHAPE = { id: data.id, shape_key: data.shape_key, stock_code: j.code, item_name: j.name || "",
+              area: b.a, aspect: b.aspect, solidity: b.solidity, img_w: C.frame.width, pts: b.pts,
+              taught_by: S.user.username, taught_at: new Date().toISOString(), photo_path: null };
+    j.shapeInfo = { exact: true }; j.shapeErr = null;
+    const meta = { id: data.id, shape_key: data.shape_key, stock_code: j.code, item_name: j.name || "",
+                   taught_by: S.user.username, taught_at: SHAPE.taught_at };
+    S.shapes[data.shape_key] = meta;
+    const c = String(j.code || "").trim().toUpperCase();
+    S.shapesByCode[c] = (S.shapesByCode[c] || []).filter(r => r.shape_key !== data.shape_key).concat([meta]);
+    dropRefMats(); C.selPt = null; C.sel = null; C.adj = 0;
+    drawShapeBox(); runCount();
+    alertMsg(data.replaced ? "◆ Shape replaced — counting by the new shape." : "◆ Shape saved — this part is now counted by its shape.");
+    if (crop) uploadShapePhoto(data.id, crop);
+  } catch (e) {
+    alertMsg("Shape not saved: " + (e.message || e));
+  } finally { btn.disabled = false; showTeach(); }
+}
+function cropBlob(b) {        // the tapped part with a margin, max 400 px — the reference photo
+  return new Promise((resolve, reject) => {
+    const m = Math.round(Math.max(b.r.width, b.r.height) * 0.25), f = C.frame;
+    const x = Math.max(0, b.r.x - m), y = Math.max(0, b.r.y - m);
+    const w = Math.min(f.width - x, b.r.width + 2 * m), h = Math.min(f.height - y, b.r.height + 2 * m);
+    const sc = Math.min(1, 400 / Math.max(w, h));
+    const c = document.createElement("canvas"); c.width = Math.round(w * sc); c.height = Math.round(h * sc);
+    c.getContext("2d").drawImage(f, x, y, w, h, 0, 0, c.width, c.height);
+    c.toBlob(bl => bl ? resolve(bl) : reject(new Error("no photo")), "image/jpeg", 0.8);
+  });
+}
+async function uploadShapePhoto(id, blob) {
+  try {
+    const path = `shapes/${id}-${Date.now()}.jpg`;
+    const up = await withTimeout(db.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: "image/jpeg", upsert: false }), 60000);
+    if (up.error) throw up.error;
+    const r = await withTimeout(db.rpc("tablet_shape_photo", { p_username: S.user ? S.user.username : "", p_pin: S.pin, p_id: id, p_path: path }));
+    if (SHAPE && SHAPE.id === id) { SHAPE.photo_path = path; drawShapeBox(); }
+  } catch (e) { console.warn("[count] shape photo not uploaded:", e); }   // the shape itself is saved
 }
 
 // ─── 7. SAVE — one database call; safe to repeat (same reference = not saved twice)
@@ -905,4 +1126,3 @@ loadUsers();
 </script>
 </body>
 </html>
-
