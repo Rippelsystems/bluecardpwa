@@ -505,7 +505,7 @@ function buildIdentityGrid() {
     <div class="card-cell">
       <label class="yellow">Barrel No</label>
       <div class="serial-row">
-        <input type="text" id="inp-barrel-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+        <input type="text" id="inp-barrel-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false" onchange="checkComponentDuplicate(this)">
         <img class="serial-thumb" id="thumb-inp-barrel-no">
         <button class="cam-btn" onclick="captureSerial('inp-barrel-no','photo_barrel', false)">📷</button>
       </div>
@@ -522,7 +522,7 @@ function buildIdentityGrid() {
     <div class="card-cell">
       <label class="yellow">Cylinder No</label>
       <div class="serial-row">
-        <input type="text" id="inp-cylinder-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+        <input type="text" id="inp-cylinder-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false" onchange="checkComponentDuplicate(this)">
         <img class="serial-thumb" id="thumb-inp-cylinder-no">
         <button class="cam-btn" onclick="captureSerial('inp-cylinder-no','photo_cylinder', false)">📷</button>
       </div>
@@ -530,7 +530,7 @@ function buildIdentityGrid() {
     <div class="card-cell">
       <label class="yellow">HRC Serial No</label>
       <div class="serial-row">
-        <input type="text" id="inp-hrc-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+        <span class="num-prefix" id="prefix-inp-hrc-serial" style="display:none;font-family:var(--font-mono,monospace);font-weight:800;font-size:14px;color:var(--accent);padding:0 2px;white-space:nowrap;"></span><input type="text" id="inp-hrc-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false" onchange="applyComponentPrefix(this);checkComponentDuplicate(this)">
         <img class="serial-thumb" id="thumb-inp-hrc-serial">
         <button class="cam-btn" onclick="captureSerial('inp-hrc-serial','photo_hrc', false)">📷</button>
       </div>
@@ -547,7 +547,7 @@ function buildIdentityGrid() {
     <div class="card-cell">
       <label class="yellow">Firing Mech No</label>
       <div class="serial-row">
-        <input type="text" id="inp-firing-mech" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+        <span class="num-prefix" id="prefix-inp-firing-mech" style="display:none;font-family:var(--font-mono,monospace);font-weight:800;font-size:14px;color:var(--accent);padding:0 2px;white-space:nowrap;"></span><input type="text" id="inp-firing-mech" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false" onchange="applyComponentPrefix(this);checkComponentDuplicate(this)">
         <img class="serial-thumb" id="thumb-inp-firing-mech">
         <button class="cam-btn" onclick="captureSerial('inp-firing-mech','photo_firing_mech', false)">📷</button>
       </div>
@@ -556,7 +556,7 @@ function buildIdentityGrid() {
     <div class="card-cell">
       <label class="yellow">HFM Serial No</label>
       <div class="serial-row">
-        <input type="text" id="inp-hfm-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+        <span class="num-prefix" id="prefix-inp-hfm-serial" style="display:none;font-family:var(--font-mono,monospace);font-weight:800;font-size:14px;color:var(--accent);padding:0 2px;white-space:nowrap;"></span><input type="text" id="inp-hfm-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false" onchange="applyComponentPrefix(this);checkComponentDuplicate(this)">
         <img class="serial-thumb" id="thumb-inp-hfm-serial">
         <button class="cam-btn" onclick="captureSerial('inp-hfm-serial','photo_hfm', false)">📷</button>
       </div>
@@ -582,13 +582,14 @@ function getIdentityMap() {
 
 function refreshIdentity() {
   const opEl=document.getElementById('id-op'); if(opEl) opEl.textContent=state.operator||'—';
+  refreshComponentPrefixes();   // v1.27: HFM- / LRC- / LFM- badges on the RLL card
   const map=getIdentityMap();
   // Use setTimeout to ensure dropdowns are populated before setting values
   setTimeout(() => {
     Object.entries(map).forEach(([elId,key])=>{
       const el=document.getElementById(elId);
       if(el && state.formData[key] !== undefined && state.formData[key] !== null) {
-        el.value=state.formData[key];
+        el.value=_stripPrefix(elId, state.formData[key]);
       }
     });
   }, 100);
@@ -902,12 +903,127 @@ async function confirmSightSerial() {
   updateUnitStrip();
 }
 
+// ─── v1.27 (10/11/2026) COMPONENT-NUMBER GATE ────────────────────────────────
+// Every manually typed component number — Barrel no, Cylinder no, HRC serial,
+// HFM serial, Firing Mech no — can be on ONE card per card type. (Production
+// numbers are not gated until confirmed per-unit; add a line here AND in
+// bluecard_component_columns() in the database to gate one.) The tablet asks the database (bluecard_component_in_use) the moment a
+// number is entered and again before every identity save; the database
+// trigger trg_weapon_builds_component_unique is the hard backstop. Numbers
+// are compared upper-case with spaces removed. Blank is never a duplicate.
+const COMPONENT_UNIQUE_FIELDS = {
+  'inp-barrel-no':   { col: 'barrel_no',      label: 'Barrel no' },
+  'inp-cylinder-no': { col: 'cylinder_no',    label: 'Cylinder no' },
+  'inp-hfm-serial':  { col: 'hfm_serial_no',  label: 'HFM serial' },
+  'inp-hrc-serial':  { col: 'hrc_serial_no',  label: 'HRC serial' },
+  'inp-firing-mech': { col: 'firing_mech_no', label: 'Firing mech no' },
+};
+state._dupComponents = state._dupComponents || {};   // col -> message while a duplicate is sitting in the field
+
+// ─── v1.27 RLL fixed prefixes (Gerhard, 10/11/2026) ──────────────────────────
+// On the RLL card the operator types just the number; the tablet shows the
+// prefix in front of the box and stores prefix + number: HFM-26122,
+// LRC-26192(25), LFM-26075(25). Typing the prefix anyway (with or without the
+// hyphen, any case) is not doubled. Other card types are untouched.
+const COMPONENT_PREFIX = { RLL: { 'inp-hfm-serial': 'HFM-', 'inp-hrc-serial': 'LRC-', 'inp-firing-mech': 'LFM-' } };
+function _componentPrefix(elId) { return (COMPONENT_PREFIX[state.cardType] || {})[elId] || ''; }
+// stored value -> what the operator sees in the box (number only)
+function _stripPrefix(elId, val) {
+  const p = _componentPrefix(elId); if (!p || !val) return val;
+  const m = new RegExp('^\\s*' + p.slice(0, -1) + '\\s*-?\\s*', 'i').exec(val);
+  return m ? val.slice(m[0].length) : val;
+}
+// what is in the box -> stored value (prefix + number)
+function _withPrefix(elId, raw) {
+  const p = _componentPrefix(elId); const v = String(raw || '').trim();
+  if (!p || !v) return v || null;
+  return p + _stripPrefix(elId, v).trim();
+}
+function applyComponentPrefix(inp) {           // onchange: normalise what was typed
+  if (!_componentPrefix(inp.id)) return;
+  inp.value = _stripPrefix(inp.id, inp.value).trim();
+}
+function refreshComponentPrefixes() {          // show/hide the badges for the current card type
+  ['inp-hfm-serial', 'inp-hrc-serial', 'inp-firing-mech'].forEach(id => {
+    const b = document.getElementById('prefix-' + id), p = _componentPrefix(id);
+    if (b) { b.textContent = p; b.style.display = p ? 'inline' : 'none'; }
+  });
+}
+// value of an identity field as it must be stored (prefix applied where set)
+function _identityValue(elId, el) { return _componentPrefix(elId) ? _withPrefix(elId, el.value) : (el.value || null); }
+
+async function _componentInUse(col, value) {
+  const v = String(value || '').trim();
+  if (!v) return null;
+  const { data, error } = await supabaseClient.rpc('bluecard_component_in_use', {
+    p_card_type: state.cardType, p_column: col, p_value: v, p_exclude_id: state.buildId || null
+  });
+  if (error) throw error;
+  return data || null;          // text = "HFM serial 26122 is already on card RLL 260071 (Trolley 11 / Pos 56 · IN PROGRESS)"
+}
+
+function _markComponentField(elId, msg) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.style.borderBottomColor = msg ? 'var(--fail, #e03c3c)' : '';
+  el.style.backgroundColor   = msg ? 'rgba(224,60,60,0.12)' : '';
+  el.title = msg || '';
+}
+
+// onchange of the three inputs — tell the operator at once
+async function checkComponentDuplicate(inp) {
+  const cfg = COMPONENT_UNIQUE_FIELDS[inp.id];
+  if (!cfg) return;
+  try {
+    const msg = await _componentInUse(cfg.col, _identityValue(inp.id, inp));
+    if (msg) {
+      state._dupComponents[cfg.col] = msg;
+      _markComponentField(inp.id, msg);
+      showToast('🚫 ' + msg + ' — check the number on the gun', 'error');
+    } else {
+      delete state._dupComponents[cfg.col];
+      _markComponentField(inp.id, null);
+    }
+  } catch (e) {
+    console.warn('[ComponentGate] check failed', e);   // the save-time check and the DB trigger still apply
+  }
+}
+
+// Before an identity save: true = blocked (a duplicate is in one of the fields)
+async function _blockIfDuplicateComponents() {
+  for (const [elId, cfg] of Object.entries(COMPONENT_UNIQUE_FIELDS)) {
+    const el = document.getElementById(elId);
+    if (!el || !el.value.trim()) { delete state._dupComponents[cfg.col]; _markComponentField(elId, null); continue; }
+    let msg = null;
+    try { msg = await _componentInUse(cfg.col, _identityValue(elId, el)); }
+    catch (e) { console.warn('[ComponentGate] check failed', e); continue; }   // DB trigger is the backstop
+    if (msg) {
+      state._dupComponents[cfg.col] = msg;
+      _markComponentField(elId, msg);
+      showToast('🚫 Not saved — ' + msg, 'error');
+      return true;
+    }
+    delete state._dupComponents[cfg.col];
+    _markComponentField(elId, null);
+  }
+  return false;
+}
+
+// The database refused the row (trigger message "DUPLICATE|<col>|<text>")
+function _duplicateComponentError(error) {
+  const m = /DUPLICATE\|(\w+)\|(.+)$/.exec((error && error.message) || '');
+  if (!m) return null;
+  const elId = Object.keys(COMPONENT_UNIQUE_FIELDS).find(k => COMPONENT_UNIQUE_FIELDS[k].col === m[1]);
+  if (elId) { state._dupComponents[m[1]] = m[2]; _markComponentField(elId, m[2]); }
+  return m[2];
+}
+
 async function saveIdentity() {
   // Collect ALL fields from form — including selects
   const map = getIdentityMap();
   Object.entries(map).forEach(([elId, key]) => {
     const el = document.getElementById(elId);
-    if (el) state.formData[key] = el.value || null;
+    if (el) state.formData[key] = _identityValue(elId, el);
   });
 
   // Block save if launcher serial entered but not confirmed
@@ -956,6 +1072,9 @@ async function saveIdentity() {
     return;
   }
 
+  // v1.27: a component number already on another card stops the save
+  if (await _blockIfDuplicateComponents()) return;
+
   // Always set status and card type
   state.formData.status = state.formData.status || 'IN PROGRESS';
   state.formData.card_type = state.cardType;
@@ -972,7 +1091,12 @@ async function saveIdentity() {
     ({data: result, error} = await _createBuildRow({...state.formData}));
   }
 
-  if (error) { console.error(error); showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
+  if (error) {
+    console.error(error);
+    const dup = _duplicateComponentError(error);
+    showToast(dup ? '🚫 Not saved — ' + dup : 'Save failed — ' + (error.message||'check connection'), 'error');
+    return;
+  }
 
   // Update serial register — mark as IN PROGRESS with trolley info
   const regSerial = _unitIdentifierSerial();
@@ -2017,13 +2141,18 @@ async function autoSaveIdentity() {
   const map = getIdentityMap();
   Object.entries(map).forEach(([elId, key]) => {
     const el = document.getElementById(elId);
-    if (el) state.formData[key] = el.value || null;
+    if (el) state.formData[key] = _identityValue(elId, el);
   });
   state.formData.status    = state.formData.status    || 'IN PROGRESS';
   state.formData.card_type = state.cardType;
   delete state.formData.checks;   // see loadBuild — never write a checks snapshot from identity
 
   try {
+    // v1.27: never auto-save a duplicate component number
+    if (await _blockIfDuplicateComponents()) {
+      if (indEl) { indEl.textContent = '🚫 Not saved — duplicate component number'; indEl.style.color = 'var(--fail, #e03c3c)'; }
+      return;
+    }
     let result, error;
     if (state.buildId) {
       ({data: result, error} = await supabaseClient
@@ -2066,9 +2195,11 @@ async function autoSaveIdentity() {
 
   } catch(e) {
     console.error('[AutoSave]', e);
+    const dup = _duplicateComponentError(e);
+    if (dup) showToast('🚫 Not saved — ' + dup, 'error');
     if (indEl) {
-      indEl.textContent = '⚠ Auto-save failed';
-      indEl.style.color = 'var(--warn)';
+      indEl.textContent = dup ? '🚫 Not saved — duplicate component number' : '⚠ Auto-save failed';
+      indEl.style.color = dup ? 'var(--fail, #e03c3c)' : 'var(--warn)';
     }
   } finally {
     _autoSaving = false;
