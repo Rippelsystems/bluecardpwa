@@ -36,6 +36,12 @@ function show(screenId) {
 }
 
 function showSection(id) {
+  // v1.29: Identity opened from the bar with no card open = a new card —
+  // seed it exactly as Start New Card does (operator, card type, start time)
+  if (id==='identity' && !state.buildId && !state.formData.operator_number) {
+    state.formData = { ...state.formData, operator_number: state.operator, card_type: state.cardType,
+                       status: 'IN PROGRESS', session_start: state.formData.session_start || new Date().toISOString() };
+  }
   if (id==='identity') refreshIdentity();
   if (id==='checks')   refreshChecks();
   if (id==='signoff')  refreshSignoff();
@@ -1203,6 +1209,14 @@ async function _createBuildRow(payload) {
     // Never create a card with no identifying serial (a "ghost" card)
     return { data: null, error: { message: 'No serial on this card yet — confirm the serial first' } };
   }
+  // v1.29 (11/11/2026): a card is ALWAYS stamped with the operator who started
+  // it. Opening Identity from the bottom bar (instead of Start New Card) used
+  // to create the card from an empty form — no operator_number, no
+  // session_start — and the KPIs are built on that stamp.
+  if (!payload.operator_number) payload.operator_number = state.operator || null;
+  if (!payload.card_type)       payload.card_type       = state.cardType;
+  if (!payload.status)          payload.status          = 'IN PROGRESS';
+  if (!payload.session_start)   payload.session_start   = new Date().toISOString();
   const run = (async () => {
     // 1. A card already exists for this serial.
     //    23/10/2026 (v1.22): adopt it ONLY if it is this operator's own card
