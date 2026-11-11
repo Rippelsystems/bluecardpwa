@@ -288,6 +288,7 @@ async function loadBuild(id) {
   // overwrite every tick made since (the "ticks wiped" bug).
   state.formData={...row}; delete state.formData.checks;
   state.cardType=row.card_type||'RLL';
+  _rememberStoredComponents(row);   // v1.28: a number this card ALREADY holds never blocks its saves
   // A saved row's identifying serial was already validated when it was
   // first confirmed — GRN40 = sight_serial, RLL/XRGL40 = launcher_serial.
   state.checks=row.checks||{}; state.serialVerified=!!_rowIdentifierSerial(row);
@@ -301,7 +302,7 @@ async function loadBuild(id) {
 }
 
 function startNewCard() {
-  state.buildId=null;
+  state.buildId=null; state._storedComponents={}; state._dupComponents={};
   state.formData={operator_number:state.operator,card_type:state.cardType,status:'IN PROGRESS',session_start:new Date().toISOString()};
   state.checks={}; state.serialVerified=false;
   updateCardBadges();
@@ -312,7 +313,7 @@ function startNewCard() {
 }
 
 function goToResume() {
-  state.buildId=null; state.formData={}; state.checks={}; state.serialVerified=false;
+  state.buildId=null; state.formData={}; state.checks={}; state.serialVerified=false; state._storedComponents={}; state._dupComponents={};
   show('screen-resume'); loadResumeScreen();
 }
 
@@ -926,12 +927,18 @@ state._dupComponents = state._dupComponents || {};   // col -> message while a d
 // LRC-26192(25), LFM-26075(25). Typing the prefix anyway (with or without the
 // hyphen, any case) is not doubled. Other card types are untouched.
 const COMPONENT_PREFIX = { RLL: { 'inp-hfm-serial': 'HFM-', 'inp-hrc-serial': 'LRC-', 'inp-firing-mech': 'LFM-' } };
+// v1.28 (10/11/2026): letters the operators type in front of the number that
+// are NOT part of it — dropped the same way as the prefix (HFM box: "LHF26277")
+const COMPONENT_PREFIX_ALIASES = { 'inp-hfm-serial': ['LHF'] };
 function _componentPrefix(elId) { return (COMPONENT_PREFIX[state.cardType] || {})[elId] || ''; }
 // stored value -> what the operator sees in the box (number only)
 function _stripPrefix(elId, val) {
   const p = _componentPrefix(elId); if (!p || !val) return val;
-  const m = new RegExp('^\\s*' + p.slice(0, -1) + '\\s*-?\\s*', 'i').exec(val);
-  return m ? val.slice(m[0].length) : val;
+  const words = [p.slice(0, -1)].concat(COMPONENT_PREFIX_ALIASES[elId] || []);
+  let v = String(val), m;
+  // strip repeatedly: "HFM-LHF-26216" -> "LHF-26216" -> "26216"
+  while ((m = new RegExp('^\\s*(' + words.join('|') + ')\\s*-?\\s*', 'i').exec(v))) v = v.slice(m[0].length);
+  return v;
 }
 // what is in the box -> stored value (prefix + number)
 function _withPrefix(elId, raw) {
@@ -975,8 +982,14 @@ async function checkComponentDuplicate(inp) {
   const cfg = COMPONENT_UNIQUE_FIELDS[inp.id];
   if (!cfg) return;
   try {
-    const msg = await _componentInUse(cfg.col, _identityValue(inp.id, inp));
-    if (msg) {
+    const value = _identityValue(inp.id, inp);
+    const msg = await _componentInUse(cfg.col, value);
+    if (msg && _isStoredComponent(cfg.col, value)) {
+      // this card already holds it (one of the known pairs) — warn, don't block
+      delete state._dupComponents[cfg.col];
+      _markComponentWarn(inp.id, msg);
+      showToast('⚠ ' + msg + ' — this card already carries it; correct it when the real number is known', 'warn');
+    } else if (msg) {
       state._dupComponents[cfg.col] = msg;
       _markComponentField(inp.id, msg);
       showToast('🚫 ' + msg + ' — check the number on the gun', 'error');
@@ -989,13 +1002,44 @@ async function checkComponentDuplicate(inp) {
   }
 }
 
-// Before an identity save: true = blocked (a duplicate is in one of the fields)
+// v1.28 (11/11/2026): the gate only bites when a number is NEW on this card —
+// the same rule as the database trigger. A card that already holds one of the
+// known duplicate numbers (the 6 pairs found 10 Nov) must still save its
+// trolley, position, other numbers and progress; the duplicate field is shown
+// amber until it is corrected. v1.27 refused every save on those cards.
+state._storedComponents = state._storedComponents || {};   // col -> value as last loaded/saved
+function _normComponent(v) {            // same as bluecard_component_norm() in the database
+  return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^[A-Z]+/, '');
+}
+function _rememberStoredComponents(row) {
+  state._storedComponents = {};
+  Object.values(COMPONENT_UNIQUE_FIELDS).forEach(cfg => { state._storedComponents[cfg.col] = (row && row[cfg.col]) || null; });
+}
+function _isStoredComponent(col, value) {
+  const stored = state._storedComponents[col];
+  return !!stored && _normComponent(stored) === _normComponent(value);
+}
+function _markComponentWarn(elId, msg) {      // amber: already on this card, not blocking
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.style.borderBottomColor = 'var(--warn, #e08f1a)';
+  el.style.backgroundColor   = 'rgba(224,143,26,0.12)';
+  el.title = msg;
+}
+
+// Before an identity save: true = blocked (a NEW duplicate is in one of the fields)
 async function _blockIfDuplicateComponents() {
   for (const [elId, cfg] of Object.entries(COMPONENT_UNIQUE_FIELDS)) {
     const el = document.getElementById(elId);
     if (!el || !el.value.trim()) { delete state._dupComponents[cfg.col]; _markComponentField(elId, null); continue; }
+    const value = _identityValue(elId, el);
+    if (_isStoredComponent(cfg.col, value)) {   // unchanged on this card — never blocks
+      delete state._dupComponents[cfg.col];
+      if (el.title && /already on card/.test(el.title)) _markComponentWarn(elId, el.title); else _markComponentField(elId, null);
+      continue;
+    }
     let msg = null;
-    try { msg = await _componentInUse(cfg.col, _identityValue(elId, el)); }
+    try { msg = await _componentInUse(cfg.col, value); }
     catch (e) { console.warn('[ComponentGate] check failed', e); continue; }   // DB trigger is the backstop
     if (msg) {
       state._dupComponents[cfg.col] = msg;
@@ -1110,6 +1154,7 @@ async function saveIdentity() {
     if (serErr) console.warn('Serial status update failed:', serErr);
   }
 
+  _rememberStoredComponents(state.formData);
   await logActivity('IDENTITY_SAVE', state.formData, null);
   showToast('Identity saved ✓', 'ok');
   loadActivityLog(_unitIdentifierSerial());
@@ -2181,6 +2226,7 @@ async function autoSaveIdentity() {
       indEl.style.color = 'var(--pass)';
       setTimeout(() => { if(indEl) indEl.textContent = ''; }, 3000);
     }
+    _rememberStoredComponents(state.formData);
     await logActivity('IDENTITY_AUTOSAVE', state.formData, null);
 
     // Keep the XRGL40 <-> GRN40 sight pairing in sync while the build is
