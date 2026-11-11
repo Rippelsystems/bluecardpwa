@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
-  <link rel="stylesheet" href="css/style.css?v=1.29">
+  <link rel="stylesheet" href="css/style.css?v=1.30">
   <!-- ── SITE ACCESS GATE (Rippel Matrix BCDS) — see js/sitegate.js ───────── -->
   <style>
     html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
@@ -93,7 +93,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:8px;font-size:13px;font-weight:700;color:#ffffff;letter-spacing:0.08em;text-align:center;font-family:monospace;">
-    v1.29 · 11 Nov 2026
+    v1.30 · 11 Nov 2026
   </div>
 
 </section>
@@ -152,30 +152,37 @@
          font-size:12px;font-weight:700;padding:8px 10px;border-radius:6px;margin-bottom:10px;">
       🔓 ADMIN PREVIEW — also showing units whose build card has an open FAIL. Nothing entered here is saved as a real QC record.
     </div>
-    <div class="section-head"><span class="section-num">1</span><h2 id="fatpdi-units-heading">Units Ready for Inspection</h2></div>
+    <!-- v1.30 (11/11/2026): LIST of units — tap one to open it on its own -->
+    <div id="fatpdi-list-view">
+      <div class="section-head"><span class="section-num">1</span><h2 id="fatpdi-units-heading">Units Ready for Inspection</h2></div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-      <div class="field-group" style="margin:0;">
-        <label>Contract</label>
-        <select id="fatpdi-filter-contract" style="font-size:13px;" onchange="_fatpdiApplyFilter()"></select>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div class="field-group" style="margin:0;">
+          <label>Contract</label>
+          <select id="fatpdi-filter-contract" style="font-size:13px;" onchange="_fatpdiApplyFilter()"></select>
+        </div>
+        <div class="field-group" style="margin:0;">
+          <label>Search Serial</label>
+          <input type="text" id="fatpdi-filter-search" placeholder="e.g. RLL 26004" autocapitalize="characters"
+                 spellcheck="false" style="font-size:13px;" onchange="_fatpdiApplyFilter()">
+        </div>
       </div>
-      <div class="field-group" style="margin:0;">
-        <label>Search Serial</label>
-        <input type="text" id="fatpdi-filter-search" placeholder="e.g. RLL 26004" autocapitalize="characters"
-               spellcheck="false" style="font-size:13px;" onchange="_fatpdiApplyFilter()">
+
+      <div id="fatpdi-empty-msg" style="display:none;color:var(--text-dim,#8fa3c0);font-size:13px;padding:16px 0;"></div>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border,#1e3354);border-radius:8px;">
+        <table id="fatpdi-grid" class="fatpdi-table" style="border-collapse:collapse;width:100%;font-size:12px;"></table>
       </div>
+      <div id="fatpdi-count-label" style="font-size:11px;color:var(--text-dim,#8fa3c0);margin:8px 0;"></div>
+      <button class="btn btn-secondary" id="btn-fatpdi-loadmore" style="display:none;" onclick="_fatpdiLoadMore()">Load 50 More</button>
+
+      <div class="divider"></div>
+      <button class="btn btn-primary" id="btn-fatpdi-save" onclick="saveFatPdi()">💾 Save All (loaded units only)</button>
+      <button class="btn btn-secondary" style="margin-top:8px;" onclick="goToResume()">← Back to Home</button>
     </div>
 
-    <div id="fatpdi-empty-msg" style="display:none;color:var(--text-dim,#8fa3c0);font-size:13px;padding:16px 0;"></div>
-    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border,#1e3354);border-radius:8px;">
-      <table id="fatpdi-grid" class="fatpdi-table" style="border-collapse:collapse;width:100%;font-size:12px;"></table>
-    </div>
-    <div id="fatpdi-count-label" style="font-size:11px;color:var(--text-dim,#8fa3c0);margin:8px 0;"></div>
-    <button class="btn btn-secondary" id="btn-fatpdi-loadmore" style="display:none;" onclick="_fatpdiLoadMore()">Load 50 More</button>
-
-    <div class="divider"></div>
-    <button class="btn btn-primary" id="btn-fatpdi-save" onclick="saveFatPdi()">💾 Save All (loaded units only)</button>
-    <button class="btn btn-secondary" style="margin-top:8px;" onclick="goToResume()">← Back to Home</button>
+    <!-- v1.30: ONE unit at a time — vertical PASS / FAIL cards like Checks,
+         in the stage's own colours (FAT blue, PDI violet). Save → back to list. -->
+    <div id="fatpdi-unit-view" style="display:none;"></div>
   </div>
 </section>
 
@@ -185,6 +192,42 @@
                    background:transparent;color:var(--text,#fff);font-weight:700;margin:0 2px;cursor:pointer; }
   .fatpdi-toggle.is-pass { background:#1a9e5c;border-color:#1a9e5c;color:#fff; }
   .fatpdi-toggle.is-fail { background:#d93025;border-color:#d93025;color:#fff; }
+
+  /* ── v1.30 (11/11/2026): one unit at a time — FAT / PDI single-unit view ──
+     Same soft, raised look as the Checks page, in each stage's OWN colours so
+     nobody mistakes FAT or PDI for the build Checks. PASS still turns green
+     and FAIL red when selected.  FAT = soft blue · PDI = soft violet.        */
+  #screen-fatpdi { --fp-tint:#eef4fd; --fp-edge:#c5d8f3; --fp-ink:#24548f; --fp-shadow:#a9c4e8; --fp-band:#2f6fc0; }
+  #screen-fatpdi[data-fp-stage="PDI"] { --fp-tint:#f4f0fc; --fp-edge:#d8cbf1; --fp-ink:#5a3c97; --fp-shadow:#c4b1e6; --fp-band:#7650c0; }
+  #screen-fatpdi[data-fp-stage="FAT"] .card-badge { background:#2f6fc0; }
+  #screen-fatpdi[data-fp-stage="PDI"] .card-badge { background:#7650c0; }
+  .fp-list-row { cursor:pointer; }
+  .fp-list-row:hover td, .fp-list-row:active td { background:rgba(47,111,192,0.08); }
+  .fp-open { background:var(--fp-tint); color:var(--fp-ink); border:1px solid var(--fp-edge); border-radius:7px;
+             font-weight:800; font-size:12px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
+  .fp-prog { font-size:12px; font-weight:700; white-space:nowrap; }
+  .fp-band { background:var(--fp-band); color:#fff; border-radius:10px; padding:10px 14px; margin-bottom:12px; }
+  .fp-band .fp-stage { font-size:11px; font-weight:800; letter-spacing:0.08em; opacity:0.9; }
+  .fp-band .fp-serial { font-family:var(--font-mono,monospace); font-size:22px; font-weight:800; margin-top:2px; }
+  .fp-band .fp-meta { font-size:12px; opacity:0.9; margin-top:2px; }
+  .fp-row { background:var(--fp-tint); border:1px solid var(--fp-edge); border-radius:10px; padding:12px 13px;
+            margin-bottom:10px; box-shadow:0 2px 4px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04); transition:box-shadow 0.15s; }
+  .fp-row[data-result="PASS"] { border-color:var(--pass,#1a9e5c); background:#f0faf5; box-shadow:0 2px 8px rgba(26,158,92,0.15); }
+  .fp-row[data-result="FAIL"] { border-color:var(--fail,#d93025); background:#fdf2f2; box-shadow:0 2px 8px rgba(217,48,37,0.15); }
+  .fp-label { display:block; font-size:13px; color:var(--text); margin-bottom:10px; line-height:1.4; }
+  .fp-label .fp-no { color:var(--fp-ink); font-weight:800; margin-right:6px; }
+  .fp-btns { display:flex; gap:8px; }
+  .fp-btn { flex:1; padding:10px 4px; border:none; border-radius:8px; font-size:12px; font-weight:800; letter-spacing:0.06em;
+            cursor:pointer; transition:transform 0.08s, box-shadow 0.08s; -webkit-tap-highlight-color:transparent;
+            background:linear-gradient(180deg, #ffffff 0%, var(--fp-tint) 100%); color:var(--fp-ink);
+            box-shadow:0 4px 0 var(--fp-shadow), 0 1px 3px rgba(0,0,0,0.1); }
+  .fp-btn.pass.selected { background:linear-gradient(180deg, #20c070 0%, #15a055 100%); color:#fff;
+            box-shadow:0 1px 0 #0a6a35, inset 0 2px 4px rgba(0,0,0,0.2); transform:translateY(3px); }
+  .fp-btn.fail.selected { background:linear-gradient(180deg, #e83030 0%, #c01818 100%); color:#fff;
+            box-shadow:0 1px 0 #800808, inset 0 2px 4px rgba(0,0,0,0.2); transform:translateY(3px); }
+  .fp-remarks { width:100%; min-height:64px; font-size:13px; }
+  .fp-actions .btn { margin-top:8px; }
+  .fp-save { background:var(--fp-band) !important; border-color:var(--fp-band) !important; }
 </style>
 
 <!-- ══ IDENTITY ══════════════════════════════════════════════════════════════ -->
@@ -367,14 +410,14 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/supabase.js?v=1.29"></script>
-<script src="js/sitegate.js?v=1.29"></script>
-<script src="js/logo.js?v=1.29"></script>
-<script src="js/cardconfig.js?v=1.29"></script>
-<script src="js/fatpdi_config.js?v=1.29"></script>
-<script src="js/app.js?v=1.29"></script>
-<script src="js/fatpdi.js?v=1.29"></script>
-<script src="js/camera_enhanced.js?v=1.29"></script>
+<script src="js/supabase.js?v=1.30"></script>
+<script src="js/sitegate.js?v=1.30"></script>
+<script src="js/logo.js?v=1.30"></script>
+<script src="js/cardconfig.js?v=1.30"></script>
+<script src="js/fatpdi_config.js?v=1.30"></script>
+<script src="js/app.js?v=1.30"></script>
+<script src="js/fatpdi.js?v=1.30"></script>
+<script src="js/camera_enhanced.js?v=1.30"></script>
 
 <script>
 // Set logos immediately after logo.js loads
