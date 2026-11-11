@@ -25,7 +25,9 @@ const fatpdi = {
   offset: 0,            // paging — a contract can have 1000+ guns, so we never
   totalCount: 0,         // load them all at once, only FATPDI_PAGE_SIZE per page
   filterContract: '',
-  filterSearch: ''
+  filterSearch: '',
+  focus: null,          // v1.30: unit serial open in the single-unit view (FAT / PDI), null = list
+  focusSnap: null       // v1.30: its results/remarks when opened — Back without saving restores them
 };
 
 // 23/10/2026 (v1.22): a Supabase call that never answers (dead Wi-Fi,
@@ -98,6 +100,11 @@ function openFatPdi(stage, cardType) {
   // "Final Acceptance Checklist" — not "FAT", so it is not confused with the
   // GRN40 build card.
   document.getElementById('fatpdi-stage-badge').textContent = stageCfg.acceptance ? 'ACCEPT' : stage;
+  // v1.30: the screen carries the stage, so FAT and PDI each get their own colours
+  const scr = document.getElementById('screen-fatpdi');
+  if (scr) scr.dataset.fpStage = stageCfg.acceptance ? 'ACC' : stage;
+  fatpdi.focus = null; fatpdi.focusSnap = null;
+  _fpShowList();
   document.getElementById('fatpdi-title').textContent =
     stageCfg.acceptance ? `${stageCfg.title || 'Final Acceptance Checklist'} — ${typeCfg.label}` : `${stage} — ${typeCfg.label}`;
   const unitsHeading = document.getElementById('fatpdi-units-heading');
@@ -139,6 +146,7 @@ async function _loadFatPdiContracts() {
 function _fatpdiLoadMore() { _loadFatPdiUnits(fatpdi.units.length === 0); }
 
 function _fatpdiApplyFilter() {
+  fatpdi.focus = null; fatpdi.focusSnap = null; _fpShowList();
   fatpdi.filterContract = document.getElementById('fatpdi-filter-contract').value;
   fatpdi.filterSearch = document.getElementById('fatpdi-filter-search').value.trim().toUpperCase();
   fatpdi.offset = 0;
@@ -412,6 +420,9 @@ function _setFatPdiNotes(inp) { fatpdi.notes[inp.dataset.notesUnit] = inp.value;
 
 // ── Render the grid: rows = units, columns = checklist items ───────────────
 function _renderFatPdiGrid() {
+  if (!_isAcc()) { _renderFatPdiList(); return; }   // v1.30: FAT / PDI = pick a unit, then one at a time
+  const saveAll = document.getElementById('btn-fatpdi-save');
+  if (saveAll) saveAll.style.display = '';            // the acceptance grid keeps its Save All
   const items = FATPDI_TYPES[fatpdi.cardType][fatpdi.stage].items;
   const table = document.getElementById('fatpdi-grid');
 
@@ -458,6 +469,167 @@ function _renderFatPdiGrid() {
   table.innerHTML = html;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// v1.30 (11/11/2026) — FAT and PDI: ONE UNIT AT A TIME
+// The list shows each unit with its progress; tapping it opens that gun on
+// its own, its items as vertical PASS / FAIL cards like the Checks page but
+// in the stage's own colours (FAT blue, PDI violet — set in index.html).
+// Save writes that one unit and goes straight back to the list.
+// The GRN40 Final Acceptance Checklist keeps its own grid (unchanged).
+// ════════════════════════════════════════════════════════════════════════
+function _fpEsc(t) { return String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _fpItems() { return FATPDI_TYPES[fatpdi.cardType][fatpdi.stage].items; }
+function _fpProgress(us) {
+  const items = _fpItems(), res = fatpdi.results[us] || {};
+  const done = items.filter(it => res[it.id]).length;
+  const fails = items.filter(it => res[it.id] === 'FAIL').length;
+  return { done, total: items.length, fails };
+}
+function _fpShowList() {
+  const lv = document.getElementById('fatpdi-list-view'), uv = document.getElementById('fatpdi-unit-view');
+  if (lv) lv.style.display = '';
+  if (uv) { uv.style.display = 'none'; uv.innerHTML = ''; }
+}
+
+function _renderFatPdiList() {
+  const table = document.getElementById('fatpdi-grid');
+  let html = '<thead><tr>'
+    + '<th style="min-width:120px;">Serial</th>'
+    + '<th style="min-width:80px;">Trolley/Pos</th>'
+    + `<th style="min-width:110px;">${fatpdi.stage} progress</th>`
+    + '<th style="width:1%;"></th>'
+    + '</tr></thead><tbody>';
+  fatpdi.units.forEach(u => {
+    const us = u.unitSerial, p = _fpProgress(us);
+    const tag = (u.status !== 'COMPLETE'
+        ? `<br><span style="font-size:9px;color:#e08f1a;">build ${_fpEsc(u.status||'IN PROGRESS')}${fatpdi.adminPreview ? ' (preview)' : ''}</span>` : '')
+      + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} FAIL on build card</span>` : '');
+    const prog = p.done === 0 ? '<span class="fp-prog" style="color:var(--text-dim,#8fa3c0);">Not started</span>'
+      : p.fails ? `<span class="fp-prog" style="color:#d93025;">${p.done}/${p.total} · ${p.fails} FAIL</span>`
+      : p.done === p.total ? '<span class="fp-prog" style="color:#1a9e5c;">✓ All PASS</span>'
+      : `<span class="fp-prog" style="color:#e08f1a;">${p.done}/${p.total}</span>`;
+    html += `<tr class="fp-list-row" data-unit="${_fpEsc(us)}" onclick="openFatPdiUnit(this.dataset.unit)">`
+      + `<td style="font-family:var(--font-mono,monospace);font-weight:700;">${_fpEsc(us)}${u.sightSerial && u.launcherSerial ? `<br><span style="font-size:10px;color:var(--text-dim,#8fa3c0);">Sight ${_fpEsc(u.sightSerial)}</span>` : ''}${tag}</td>`
+      + `<td style="font-size:12px;">${u.trolleyNumber||'—'} / ${u.trolleyPosition||'—'}</td>`
+      + `<td>${prog}</td>`
+      + `<td><button type="button" class="fp-open">Open ›</button></td>`
+      + '</tr>';
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+  // the list has nothing to save — saving happens per unit
+  const saveAll = document.getElementById('btn-fatpdi-save');
+  if (saveAll) saveAll.style.display = 'none';
+}
+
+function openFatPdiUnit(us) {
+  const u = fatpdi.units.find(x => x.unitSerial === us);
+  if (!u) return;
+  fatpdi.focus = us;
+  fatpdi.focusSnap = { results: { ...(fatpdi.results[us] || {}) }, remarks: fatpdi.remarks[us] || '' };
+  _renderFatPdiUnit();
+  const lv = document.getElementById('fatpdi-list-view'), uv = document.getElementById('fatpdi-unit-view');
+  if (lv) lv.style.display = 'none';
+  if (uv) uv.style.display = '';
+  window.scrollTo(0, 0);
+}
+
+function _renderFatPdiUnit() {
+  const us = fatpdi.focus, uv = document.getElementById('fatpdi-unit-view');
+  const u = fatpdi.units.find(x => x.unitSerial === us);
+  if (!uv || !u) return;
+  const items = _fpItems(), res = fatpdi.results[us] || {};
+  const stageName = fatpdi.stage === 'FAT' ? 'FAT · FACTORY ACCEPTANCE TEST' : 'PDI · PRE-DELIVERY INSPECTION';
+  let html = `<div class="fp-band">
+      <div class="fp-stage">${stageName} · ${_fpEsc(fatpdi.docCode || '')}</div>
+      <div class="fp-serial">${_fpEsc(us)}</div>
+      <div class="fp-meta">Trolley ${u.trolleyNumber||'—'} · Pos ${u.trolleyPosition||'—'}${u.sightSerial && u.launcherSerial ? ` · Sight ${_fpEsc(u.sightSerial)}` : ''}${u.status !== 'COMPLETE' ? ` · build ${_fpEsc(u.status||'IN PROGRESS')}` : ''}${fatpdi.adminPreview ? ' · ADMIN PREVIEW (not saved)' : ''}</div>
+    </div>
+    <div id="fp-unit-count" style="font-size:12px;color:var(--text-dim,#8fa3c0);margin:0 0 8px 2px;"></div>`;
+  items.forEach((it, i) => {
+    const cur = res[it.id] || '';
+    html += `<div class="fp-row" data-item="${_fpEsc(it.id)}" data-result="${cur}">
+        <span class="fp-label"><span class="fp-no">${String(i + 1).padStart(2, '0')}</span>${_fpEsc(it.label)}</span>
+        <div class="fp-btns">
+          <button type="button" class="fp-btn pass ${cur==='PASS'?'selected':''}" data-item="${_fpEsc(it.id)}" data-val="PASS" onclick="_fpSet(this)">PASS</button>
+          <button type="button" class="fp-btn fail ${cur==='FAIL'?'selected':''}" data-item="${_fpEsc(it.id)}" data-val="FAIL" onclick="_fpSet(this)">FAIL</button>
+        </div>
+      </div>`;
+  });
+  html += `<div class="field-group" style="margin-top:6px;">
+      <label>Remarks</label>
+      <textarea id="fp-remarks" class="fp-remarks" oninput="_fpRemarks(this)">${_fpEsc(fatpdi.remarks[us] || '')}</textarea>
+    </div>
+    <div class="fp-actions">
+      <button class="btn btn-primary fp-save" id="btn-fp-save-unit" onclick="saveFatPdiUnit()">💾 Save ${_fpEsc(us)}</button>
+      <button class="btn btn-secondary" onclick="closeFatPdiUnit()">← Back to list (don't save)</button>
+    </div>`;
+  uv.innerHTML = html;
+  _fpUpdateCount();
+}
+
+function _fpUpdateCount() {
+  const el = document.getElementById('fp-unit-count');
+  if (!el || !fatpdi.focus) return;
+  const p = _fpProgress(fatpdi.focus);
+  el.textContent = `${p.done} of ${p.total} marked${p.fails ? ` · ${p.fails} FAIL` : ''}`;
+}
+
+function _fpSet(btn) {
+  const us = fatpdi.focus; if (!us) return;
+  const item = btn.dataset.item, val = btn.dataset.val;
+  if (!fatpdi.results[us]) fatpdi.results[us] = {};
+  fatpdi.results[us][item] = val;
+  fatpdi.touched[us] = true;
+  const row = btn.closest('.fp-row');
+  if (row) {
+    row.dataset.result = val;
+    row.querySelectorAll('.fp-btn').forEach(b => b.classList.toggle('selected', b.dataset.val === val));
+  }
+  _fpUpdateCount();
+}
+function _fpRemarks(ta) {
+  if (!fatpdi.focus) return;
+  fatpdi.remarks[fatpdi.focus] = ta.value;
+  fatpdi.touched[fatpdi.focus] = true;
+}
+
+function _fpChanged() {
+  const us = fatpdi.focus, snap = fatpdi.focusSnap;
+  if (!us || !snap) return false;
+  const now = fatpdi.results[us] || {};
+  const keys = new Set([...Object.keys(now), ...Object.keys(snap.results)]);
+  for (const k of keys) if ((now[k] || '') !== (snap.results[k] || '')) return true;
+  return (fatpdi.remarks[us] || '') !== (snap.remarks || '');
+}
+
+function closeFatPdiUnit(skipAsk) {
+  const us = fatpdi.focus;
+  if (us && !skipAsk && _fpChanged()) {
+    if (!confirm(`${us}: what you marked has NOT been saved.\n\nGo back to the list and discard it?`)) return;
+    // put back what the unit had when it was opened
+    fatpdi.results[us] = { ...fatpdi.focusSnap.results };
+    if (fatpdi.focusSnap.remarks) fatpdi.remarks[us] = fatpdi.focusSnap.remarks; else delete fatpdi.remarks[us];
+  }
+  fatpdi.focus = null; fatpdi.focusSnap = null;
+  _fpShowList();
+  _renderFatPdiList();
+  if (us) {
+    const row = [...document.querySelectorAll('#fatpdi-grid tr[data-unit]')].find(r => r.dataset.unit === us);
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+  }
+}
+
+async function saveFatPdiUnit() {
+  const us = fatpdi.focus; if (!us) return;
+  const p = _fpProgress(us);
+  if (p.done === 0) { showToast('Nothing marked yet on ' + us, 'warn'); return; }
+  if (p.done < p.total &&
+      !confirm(`${us}: only ${p.done} of ${p.total} items are marked.\n\nSave what is marked now and finish the rest later?`)) return;
+  const ok = await saveFatPdi(us);
+  if (ok) closeFatPdiUnit(true);
+}
+
 function _setFatPdiResult(btn) {
   const unit = btn.dataset.unit, item = btn.dataset.item, val = btn.dataset.val;
   if (!fatpdi.results[unit]) fatpdi.results[unit] = {};
@@ -477,10 +649,11 @@ function _setFatPdiRemarks(inp) {
 }
 
 // ── Save all entered results for this stage+cardType ───────────────────────
-async function saveFatPdi() {
+async function saveFatPdi(onlyUnit) {
+  // v1.30: onlyUnit = save just that unit (the single-unit view); returns true when saved
   if (fatpdi.adminPreview) {
     showToast('🔓 Admin Preview mode — nothing is saved. Exit preview to record real results.', 'warn');
-    return;
+    return false;
   }
   const rows = [];
   const cfg = _stageCfg();
@@ -506,6 +679,7 @@ async function saveFatPdi() {
   }
   fatpdi.units.forEach(u => {
     const us = u.unitSerial;
+    if (onlyUnit && us !== onlyUnit) return;
     // Acceptance stage: only the sights the operator actually changed are
     // written, so an already-accepted sight keeps its inspector and date.
     if (_isAcc() && !fatpdi.touched[us]) return;
@@ -541,16 +715,20 @@ async function saveFatPdi() {
     });
   });
 
-  if (rows.length === 0) { showToast('Nothing entered yet', 'warn'); return; }
+  if (rows.length === 0) { showToast('Nothing entered yet', 'warn'); return false; }
 
-  const btn = document.getElementById('btn-fatpdi-save');
+  const btn = document.getElementById(onlyUnit ? 'btn-fp-save-unit' : 'btn-fatpdi-save');
+  const btnText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  let saved = false;
 
   try {
     const { error } = await supabaseClient.from(_fatpdiTable())
       .upsert(rows, { onConflict: 'unit_serial,card_type,item_id' });
     if (error) throw error;
-    showToast(`✅ ${_isAcc() ? 'Acceptance' : fatpdi.stage} results saved (${rows.length} entries)`, 'ok');
+    saved = true;
+    showToast(onlyUnit ? `✅ ${onlyUnit} — ${fatpdi.stage} saved (${rows.length} items)`
+                       : `✅ ${_isAcc() ? 'Acceptance' : fatpdi.stage} results saved (${rows.length} entries)`, 'ok');
     if (_isAcc()) {
       // show the decision stamps without a full reload
       fatpdi.units.forEach(u => {
@@ -564,6 +742,7 @@ async function saveFatPdi() {
     console.error('[FAT/PDI] save error', e);
     showToast('❌ Save failed — ' + (e.message||e), 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '💾 Save All'; }
+    if (btn) { btn.disabled = false; btn.textContent = onlyUnit ? btnText : '💾 Save All'; }
   }
+  return saved;
 }
