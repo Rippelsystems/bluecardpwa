@@ -27,8 +27,49 @@ const fatpdi = {
   filterContract: '',
   filterSearch: '',
   focus: null,          // v1.30: unit serial open in the single-unit view (FAT / PDI), null = list
-  focusSnap: null       // v1.30: its results/remarks when opened — Back without saving restores them
+  focusSnap: null,      // v1.30: its results/remarks when opened — Back without saving restores them
+  resAt: {},            // v1.32: resAt[unitSerial][itemId] = inspected_at of the saved result
+  addedCutoff: null     // v1.32: first time an added item (Cylinder Alignment) was saved for this card type
 };
+
+// ════════════════════════════════════════════════════════════════════════
+// v1.32 (12/11/2026) — ITEMS ADDED TO A LIST LATER (added: true in config)
+// FAT "Cylinder Alignment" was added on 12 Nov 2026. Gerhard: "going forward
+// is fine, what is done is done" — a gun whose FAT was already complete on
+// the old list stays complete. The moment the new item came into use is
+// read from the database: the first time it was saved for this card type
+// (nothing saved yet = not in use yet). A unit is "done on the old list" when
+// every other item is saved and all of those were saved before that moment.
+// Such a unit does not need the added item (it can still be marked);
+// every other unit needs it like any other item.
+// ════════════════════════════════════════════════════════════════════════
+function _fpAddedIds(ct, stage) {
+  return ((((FATPDI_TYPES[ct] || {})[stage] || {}).items) || []).filter(it => it.added).map(it => it.id);
+}
+async function _fpLoadAddedCutoff(ct, stage) {
+  const ids = _fpAddedIds(ct, stage);
+  if (!ids.length) return null;
+  const { data, error } = await _withTimeout(
+    supabaseClient.from(stage === 'FAT' ? 'weapon_fat_results' : 'weapon_pdi_results')
+      .select('inspected_at').eq('card_type', ct).in('item_id', ids)
+      .not('inspected_at', 'is', null).order('inspected_at', { ascending: true }).limit(1),
+    15000, 'Reading the checklist history');
+  if (error) throw error;
+  return (data && data.length) ? data[0].inspected_at : null;     // null = added item never used yet
+}
+// items this unit must have: res = {itemId: result}, at = {itemId: inspected_at}
+function _fpRequiredItems(ct, stage, res, at, cutoff) {
+  const items = (((FATPDI_TYPES[ct] || {})[stage] || {}).items) || [];
+  if (!items.some(it => it.added)) return items;
+  const older = items.filter(it => !it.added);
+  const cut = cutoff ? Date.parse(cutoff) : Infinity;
+  const doneOnOldList = older.length > 0 && older.every(it => {
+    if (!(res || {})[it.id]) return false;
+    const t = Date.parse(((at || {})[it.id]) || '');
+    return isNaN(t) || t < cut;          // a result with no time is an old one
+  });
+  return doneOnOldList ? older : items;
+}
 
 // 23/10/2026 (v1.22): a Supabase call that never answers (dead Wi-Fi,
 // request dropped) used to leave the FAT/PDI screen on "Loading…" for ever.
@@ -95,6 +136,8 @@ function openFatPdi(stage, cardType) {
   fatpdi.saved = {};
   fatpdi.touched = {};
   fatpdi.units = [];
+  fatpdi.resAt = {};
+  fatpdi.addedCutoff = null;
 
   // 31/10/2026: an acceptance stage is named for what it is — the GRN40
   // "Final Acceptance Checklist" — not "FAT", so it is not confused with the
@@ -293,15 +336,22 @@ async function _loadFatPdiUnits(reset) {
     if (pageSerials.length) {
       const { data: existing, error: exErr } = await _withTimeout(
         supabaseClient.from(_fatpdiTable())
-          .select('unit_serial,item_id,result,remarks')
+          .select('unit_serial,item_id,result,remarks,inspected_at')
           .eq('card_type', fatpdi.cardType).in('unit_serial', pageSerials),
         20000, 'Loading saved results');
       if (exErr) throw exErr;
       (existing || []).forEach(row => {
         if (!fatpdi.results[row.unit_serial]) fatpdi.results[row.unit_serial] = {};
         fatpdi.results[row.unit_serial][row.item_id] = row.result;
+        if (!fatpdi.resAt[row.unit_serial]) fatpdi.resAt[row.unit_serial] = {};
+        fatpdi.resAt[row.unit_serial][row.item_id] = row.inspected_at || null;
         if (row.remarks) fatpdi.remarks[row.unit_serial] = row.remarks;
       });
+      // v1.32: when did the added item(s) come into use (once per opening)
+      if (reset && _fpAddedIds(fatpdi.cardType, fatpdi.stage).length) {
+        try { fatpdi.addedCutoff = await _fpLoadAddedCutoff(fatpdi.cardType, fatpdi.stage); }
+        catch (e) { console.warn('[FAT/PDI] added-item cutoff', e); fatpdi.addedCutoff = null; }
+      }
     }
 
     _renderFatPdiGrid();
@@ -480,9 +530,11 @@ function _renderFatPdiGrid() {
 function _fpEsc(t) { return String(t == null ? '' : t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function _fpItems() { return FATPDI_TYPES[fatpdi.cardType][fatpdi.stage].items; }
 function _fpProgress(us) {
-  const items = _fpItems(), res = fatpdi.results[us] || {};
+  const res = fatpdi.results[us] || {};
+  // v1.32: a gun done on the old list does not need the added item
+  const items = _fpRequiredItems(fatpdi.cardType, fatpdi.stage, res, fatpdi.resAt[us], fatpdi.addedCutoff);
   const done = items.filter(it => res[it.id]).length;
-  const fails = items.filter(it => res[it.id] === 'FAIL').length;
+  const fails = _fpItems().filter(it => res[it.id] === 'FAIL').length;
   return { done, total: items.length, fails };
 }
 function _fpShowList() {
@@ -508,10 +560,12 @@ function _renderFatPdiList() {
       : p.fails ? `<span class="fp-prog" style="color:#d93025;">${p.done}/${p.total} · ${p.fails} FAIL</span>`
       : p.done === p.total ? '<span class="fp-prog" style="color:#1a9e5c;">✓ All PASS</span>'
       : `<span class="fp-prog" style="color:#e08f1a;">${p.done}/${p.total}</span>`;
+    const signedTag = (fatpdi.stage === 'PDI' && u.status === 'COMPLETE')
+      ? '<br><span class="fp-prog" style="color:#1a9e5c;font-size:10px;">🖊 SIGNED OFF</span>' : '';
     html += `<tr class="fp-list-row" data-unit="${_fpEsc(us)}" onclick="openFatPdiUnit(this.dataset.unit)">`
       + `<td style="font-family:var(--font-mono,monospace);font-weight:700;">${_fpEsc(us)}${u.sightSerial && u.launcherSerial ? `<br><span style="font-size:10px;color:var(--text-dim,#8fa3c0);">Sight ${_fpEsc(u.sightSerial)}</span>` : ''}${tag}</td>`
       + `<td style="font-size:12px;">${u.trolleyNumber||'—'} / ${u.trolleyPosition||'—'}</td>`
-      + `<td>${prog}</td>`
+      + `<td>${prog}${signedTag}</td>`
       + `<td><button type="button" class="fp-open">Open ›</button></td>`
       + '</tr>';
   });
@@ -539,6 +593,8 @@ function _renderFatPdiUnit() {
   const u = fatpdi.units.find(x => x.unitSerial === us);
   if (!uv || !u) return;
   const items = _fpItems(), res = fatpdi.results[us] || {};
+  // v1.32: an added item this gun does not need (done on the old list) says so
+  const reqIds = new Set(_fpRequiredItems(fatpdi.cardType, fatpdi.stage, res, fatpdi.resAt[us], fatpdi.addedCutoff).map(it => it.id));
   const stageName = fatpdi.stage === 'FAT' ? 'FAT · FACTORY ACCEPTANCE TEST' : 'PDI · PRE-DELIVERY INSPECTION';
   let html = `<div class="fp-band">
       <div class="fp-stage">${stageName} · ${_fpEsc(fatpdi.docCode || '')}</div>
@@ -549,7 +605,7 @@ function _renderFatPdiUnit() {
   items.forEach((it, i) => {
     const cur = res[it.id] || '';
     html += `<div class="fp-row" data-item="${_fpEsc(it.id)}" data-result="${cur}">
-        <span class="fp-label"><span class="fp-no">${String(i + 1).padStart(2, '0')}</span>${_fpEsc(it.label)}</span>
+        <span class="fp-label"><span class="fp-no">${String(i + 1).padStart(2, '0')}</span>${_fpEsc(it.label)}${it.added && !reqIds.has(it.id) ? '<br><span style="font-size:10px;font-weight:400;opacity:0.75;">not needed on this gun — FAT done before this item was added</span>' : ''}</span>
         <div class="fp-btns">
           <button type="button" class="fp-btn pass ${cur==='PASS'?'selected':''}" data-item="${_fpEsc(it.id)}" data-val="PASS" onclick="_fpSet(this)">PASS</button>
           <button type="button" class="fp-btn fail ${cur==='FAIL'?'selected':''}" data-item="${_fpEsc(it.id)}" data-val="FAIL" onclick="_fpSet(this)">FAIL</button>
@@ -564,8 +620,184 @@ function _renderFatPdiUnit() {
       <button class="btn btn-primary fp-save" id="btn-fp-save-unit" onclick="saveFatPdiUnit()">💾 Save ${_fpEsc(us)}</button>
       <button class="btn btn-secondary" onclick="closeFatPdiUnit()">← Back to list (don't save)</button>
     </div>`;
+  // v1.31: the final sign-off lives on the PDI page only
+  if (fatpdi.stage === 'PDI') html += `<div class="fp-final" id="fp-final"><h3>🖊 FINAL SIGN-OFF</h3>
+      <div id="fp-final-list" style="font-size:12px;color:var(--text-dim,#8fa3c0);">Checking the card…</div>
+      <button class="btn fp-signoff" id="btn-fp-signoff" disabled onclick="signOffFromPdi()">🖊 Sign Off ${_fpEsc(us)}</button>
+    </div>`;
   uv.innerHTML = html;
   _fpUpdateCount();
+  if (fatpdi.stage === 'PDI') _fpRefreshFinal(true);
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// v1.31 (11/11/2026) — FINAL SIGN-OFF ON THE PDI PAGE
+// The gun is only ready for shipping when PDI is done, so the sign-off that
+// marks the build card COMPLETE moved here (it was a button on Checks that
+// the floor never pressed). The button stays locked until EVERYTHING is in:
+//   1. every identity field of the card filled in
+//   2. every assembly check recorded (measurement values filled), no FAIL
+//   3. every FAT item PASS (saved)
+//   4. every PDI item PASS (on screen; saved as part of signing off)
+// Pressing it re-reads all of that from the database first, then marks the
+// card COMPLETE with the PDI operator and time, and the serial COMPLETE.
+// ════════════════════════════════════════════════════════════════════════
+const _FP_REQUIRED_FIELDS = {
+  RLL: [['contract_name','Contract'],['client_country','Country'],['year_of_manufacture','Year'],
+        ['trolley_number','Trolley'],['trolley_position','Position'],['launcher_serial','Launcher serial'],
+        ['barrel_no','Barrel no'],['barrel_production_no','Barrel prod no'],['cylinder_no','Cylinder no'],
+        ['cylinder_production_no','Cylinder prod no'],['hrc_serial_no','HRC serial'],
+        ['firing_mech_no','Firing mech no'],['hfm_serial_no','HFM serial']],
+  XRGL40: [['contract_name','Contract'],['client_country','Country'],['year_of_manufacture','Year'],
+        ['trolley_number','Trolley'],['trolley_position','Position'],['launcher_serial','Launcher serial'],
+        ['sight_serial','Sight serial'],['barrel_no','Barrel no'],['barrel_production_no','Barrel prod no'],
+        ['cylinder_no','Cylinder no'],['cylinder_production_no','Cylinder prod no'],['hrc_serial_no','HRC serial'],
+        ['hrc_prod_no','HRC prod no'],['firing_mech_no','Firing mech no'],['hfm_serial_no','HFM serial'],
+        ['hfm_prod_no','HFM prod no']],
+  GRN40: [['contract_name','Contract'],['client_country','Country'],['year_of_manufacture','Year'],
+        ['sight_serial','Sight serial']],
+};
+
+async function _fpLoadForSignoff(us) {
+  const col = fatpdi.cardType === 'GRN40' ? 'sight_serial' : 'launcher_serial';
+  const [b, f] = await Promise.all([
+    _withTimeout(supabaseClient.from('weapon_builds').select('*')
+      .eq('card_type', fatpdi.cardType).eq(col, us).limit(1), 15000, 'Reading the build card'),
+    _withTimeout(supabaseClient.from('weapon_fat_results').select('item_id,result,inspected_at')
+      .eq('card_type', fatpdi.cardType).eq('unit_serial', us), 15000, 'Reading FAT results')
+  ]);
+  if (b.error) throw b.error;
+  if (f.error) throw f.error;
+  const fatCutoff = await _fpLoadAddedCutoff(fatpdi.cardType, 'FAT');   // v1.32
+  return { build: (b.data || [])[0] || null, fat: f.data || [], fatCutoff };
+}
+
+// -> [{label, ok, why}]
+function _fpFinalChecks(build, fatRows, pdiResults, fatCutoff) {
+  const ct = fatpdi.cardType, out = [];
+  // 1. identity
+  const missing = (_FP_REQUIRED_FIELDS[ct] || []).filter(([k]) => build == null ||
+                   build[k] === null || build[k] === undefined || String(build[k]).trim() === '').map(([, l]) => l);
+  out.push({ label: 'Identity — all fields filled in', ok: !!build && missing.length === 0,
+             why: !build ? 'no build card found' : missing.length ? 'missing: ' + missing.join(', ') : '' });
+  // 2. assembly checks
+  const cfg = (typeof CARD_TYPES !== 'undefined' && CARD_TYPES[ct]) || {};
+  const defs = cfg.checks || cfg.stages || [];
+  const checks = (build && build.checks) || {};
+  const notDone = [], noValue = [], failed = [];
+  defs.forEach(c => {
+    const d = checks[c.id] || {};
+    if (!d.result) notDone.push(c.label);
+    else if (['FAIL', 'NO-GO'].includes(d.result)) failed.push(c.label);
+    else if (c.type === 'measurement' && !d.value) noValue.push(c.label);
+  });
+  out.push({ label: `Assembly checks — ${defs.length - notDone.length}/${defs.length} recorded`,
+             ok: !!build && defs.length > 0 && !notDone.length && !noValue.length && !failed.length,
+             why: [failed.length ? `${failed.length} FAIL: ${failed.slice(0,2).join(', ')}${failed.length>2?' …':''}` : '',
+                   notDone.length ? `${notDone.length} not recorded: ${notDone.slice(0,2).join(', ')}${notDone.length>2?' …':''}` : '',
+                   noValue.length ? `value missing: ${noValue.slice(0,2).join(', ')}${noValue.length>2?' …':''}` : '']
+                  .filter(Boolean).join(' · ') });
+  // 3. FAT
+  const fatRes = {}, fatAt = {};
+  (fatRows || []).forEach(r => { fatRes[r.item_id] = r.result; fatAt[r.item_id] = r.inspected_at || null; });
+  // v1.32: a gun done on the old FAT list does not need the added item
+  const fatItems = _fpRequiredItems(ct, 'FAT', fatRes, fatAt, fatCutoff);
+  const fatPass = fatItems.filter(it => fatRes[it.id] === 'PASS').length;
+  const fatFail = fatItems.filter(it => fatRes[it.id] === 'FAIL').length;
+  out.push({ label: `FAT — ${fatPass}/${fatItems.length} PASS`, ok: fatItems.length > 0 && fatPass === fatItems.length,
+             why: fatFail ? `${fatFail} FAIL on FAT` : fatPass < fatItems.length ? `${fatItems.length - fatPass} FAT item(s) not done` : '' });
+  // 4. PDI (what is on screen now)
+  const pdiItems = _fpItems();
+  const pdiPass = pdiItems.filter(it => (pdiResults || {})[it.id] === 'PASS').length;
+  const pdiFail = pdiItems.filter(it => (pdiResults || {})[it.id] === 'FAIL').length;
+  out.push({ label: `PDI — ${pdiPass}/${pdiItems.length} PASS`, ok: pdiPass === pdiItems.length,
+             why: pdiFail ? `${pdiFail} FAIL on PDI` : pdiPass < pdiItems.length ? `${pdiItems.length - pdiPass} PDI item(s) still to mark` : '' });
+  return out;
+}
+
+function _fpRenderFinal(list, signed) {
+  const el = document.getElementById('fp-final-list'), btn = document.getElementById('btn-fp-signoff');
+  if (!el || !btn) return;
+  if (signed) {
+    el.innerHTML = `<div class="fp-req"><span class="ok">✓</span><span><b>Signed off</b> — OP ${_fpEsc(signed.by || '?')} · ${_fpEsc(String(signed.at || '').slice(0,16).replace('T',' '))}</span></div>`;
+    btn.disabled = true; btn.textContent = '✓ Signed off';
+    return;
+  }
+  el.innerHTML = list.map(r => `<div class="fp-req"><span class="${r.ok ? 'ok' : 'no'}">${r.ok ? '✓' : '✗'}</span>
+      <span>${_fpEsc(r.label)}${!r.ok && r.why ? `<br><span class="why">${_fpEsc(r.why)}</span>` : ''}</span></div>`).join('');
+  const all = list.length && list.every(r => r.ok);
+  btn.disabled = !all || fatpdi.adminPreview;
+  btn.title = fatpdi.adminPreview ? 'Admin Preview — nothing is saved' : (all ? '' : 'Everything above must be ✓ first');
+}
+
+async function _fpRefreshFinal(reload) {
+  const us = fatpdi.focus; if (!us || fatpdi.stage !== 'PDI') return;
+  try {
+    if (reload || !fatpdi._final || fatpdi._final.us !== us) {
+      const d = await _fpLoadForSignoff(us);
+      fatpdi._final = { us, build: d.build, fat: d.fat, fatCutoff: d.fatCutoff };
+    }
+    if (fatpdi.focus !== us) return;
+    const b = fatpdi._final.build;
+    if (b && String(b.status || '').toUpperCase() === 'COMPLETE' && b.completed_at) {
+      _fpRenderFinal(null, { by: b.qa_operator, at: b.completed_at }); return;
+    }
+    _fpRenderFinal(_fpFinalChecks(b, fatpdi._final.fat, fatpdi.results[us], fatpdi._final.fatCutoff));
+  } catch (e) {
+    const el = document.getElementById('fp-final-list'), btn = document.getElementById('btn-fp-signoff');
+    if (el) el.textContent = '⚠ Could not check the card — ' + ((e && e.message) || e);
+    if (btn) btn.disabled = true;
+  }
+}
+
+async function signOffFromPdi() {
+  const us = fatpdi.focus; if (!us) return;
+  if (fatpdi.adminPreview) { showToast('🔓 Admin Preview — nothing is saved', 'warn'); return; }
+  const op = String(state.operator || '').trim();
+  if (!op) { showToast('Log in first — the sign-off is recorded against your operator number', 'error'); return; }
+  const btn = document.getElementById('btn-fp-signoff');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+    // fresh from the database — never sign off on what the screen remembers
+    const d = await _fpLoadForSignoff(us);
+    fatpdi._final = { us, build: d.build, fat: d.fat, fatCutoff: d.fatCutoff };
+    const list = _fpFinalChecks(d.build, d.fat, fatpdi.results[us], d.fatCutoff);
+    if (!list.every(r => r.ok)) {
+      _fpRenderFinal(list);
+      showToast('🚫 Not everything is complete — see the list', 'error');
+      return;
+    }
+    if (!confirm(`FINAL SIGN-OFF\n\n${us}\nIdentity, assembly checks, FAT and PDI are all complete.\n\nSign off as OP ${op} — ready for shipping?`)) {
+      _fpRenderFinal(list); return;
+    }
+    // PDI marks on screen not saved yet → save them first
+    if (_fpChanged()) {
+      const saved = await saveFatPdi(us);
+      if (!saved) { _fpRenderFinal(list); return; }
+      fatpdi.focusSnap = { results: { ...(fatpdi.results[us] || {}) }, remarks: fatpdi.remarks[us] || '' };
+    }
+    const now = new Date().toISOString();
+    const { error } = await supabaseClient.from('weapon_builds').update({
+      status: 'COMPLETE', qa_operator: op, completed_at: now, checks_complete: true, updated_at: now
+    }).eq('id', d.build.id);
+    if (error) throw error;
+    await supabaseClient.from('weapon_serials').update({ status: 'COMPLETE' }).eq('serial_number', us);
+    try {
+      await supabaseClient.from('weapon_build_sessions').insert({
+        launcher_serial: us, operator_number: op, action: 'PDI_SIGNOFF',
+        fields_updated: JSON.stringify({ signed_off_by: op, signed_off_at: now, stage: 'PDI', card_type: fatpdi.cardType })
+      });
+    } catch (e) { console.warn('[Sign-off] log failed', e); }
+    const u = fatpdi.units.find(x => x.unitSerial === us); if (u) u.status = 'COMPLETE';
+    showToast(`✅ ${us} signed off — ready for shipping`, 'ok');
+    closeFatPdiUnit(true);
+  } catch (e) {
+    console.error('[Sign-off] error', e);
+    showToast('❌ Sign-off failed — ' + ((e && e.message) || e), 'error');
+    _fpRefreshFinal(false);
+  } finally {
+    if (btn && btn.isConnected && btn.textContent === 'Checking…') btn.textContent = `🖊 Sign Off ${us}`;
+  }
 }
 
 function _fpUpdateCount() {
@@ -587,6 +819,7 @@ function _fpSet(btn) {
     row.querySelectorAll('.fp-btn').forEach(b => b.classList.toggle('selected', b.dataset.val === val));
   }
   _fpUpdateCount();
+  if (fatpdi.stage === 'PDI' && fatpdi._final && fatpdi._final.us === us) _fpRefreshFinal(false);
 }
 function _fpRemarks(ta) {
   if (!fatpdi.focus) return;
@@ -727,6 +960,14 @@ async function saveFatPdi(onlyUnit) {
       .upsert(rows, { onConflict: 'unit_serial,card_type,item_id' });
     if (error) throw error;
     saved = true;
+    // v1.32: keep the saved times on screen in step (they decide whether a
+    // gun was done on the old list), and note the first use of an added item
+    const added = _fpAddedIds(fatpdi.cardType, fatpdi.stage);
+    rows.forEach(r => {
+      if (!fatpdi.resAt[r.unit_serial]) fatpdi.resAt[r.unit_serial] = {};
+      fatpdi.resAt[r.unit_serial][r.item_id] = r.inspected_at;
+      if (added.includes(r.item_id) && !fatpdi.addedCutoff) fatpdi.addedCutoff = r.inspected_at;
+    });
     showToast(onlyUnit ? `✅ ${onlyUnit} — ${fatpdi.stage} saved (${rows.length} items)`
                        : `✅ ${_isAcc() ? 'Acceptance' : fatpdi.stage} results saved (${rows.length} entries)`, 'ok');
     if (_isAcc()) {
