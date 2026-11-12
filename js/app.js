@@ -33,9 +33,16 @@ function show(screenId) {
   // Acceptance Checklist, so the bar tab says so (it is not the build card).
   const fatLbl = document.getElementById('nav-fat-label');
   if (fatLbl) fatLbl.textContent = (state.cardType === 'GRN40') ? 'Acceptance' : 'FAT';
+  // v1.32 (12/11/2026): Rear Assy tab — RLL and XRGL40 only
+  if (typeof refreshRearAssyTab === 'function') refreshRearAssyTab();
 }
 
 function showSection(id) {
+  // v1.31 (11/11/2026): sign-off is done on the PDI page (final check) only
+  if (id === 'signoff') {
+    showToast('🖊 Sign-off is now done on the PDI page, once identity, checks, FAT and PDI are complete', 'warn');
+    return;
+  }
   // v1.29: Identity opened from the bar with no card open = a new card —
   // seed it exactly as Start New Card does (operator, card type, start time)
   if (id==='identity' && !state.buildId && !state.formData.operator_number) {
@@ -289,6 +296,7 @@ async function loadBuild(id) {
   if (!data||data.length===0){showToast('Could not load','error');return;}
   const row=data[0];
   state.buildId=row.id;
+  if (typeof resetCardRearAssy === 'function') resetCardRearAssy();   // v1.32
   // formData must NEVER carry a copy of checks: identity auto-save spreads
   // formData into the update, so a stale checks snapshot taken here would
   // overwrite every tick made since (the "ticks wiped" bug).
@@ -309,6 +317,7 @@ async function loadBuild(id) {
 
 function startNewCard() {
   state.buildId=null; state._storedComponents={}; state._dupComponents={};
+  if (typeof resetCardRearAssy === 'function') resetCardRearAssy();   // v1.32
   state.formData={operator_number:state.operator,card_type:state.cardType,status:'IN PROGRESS',session_start:new Date().toISOString()};
   state.checks={}; state.serialVerified=false;
   updateCardBadges();
@@ -320,6 +329,7 @@ function startNewCard() {
 
 function goToResume() {
   state.buildId=null; state.formData={}; state.checks={}; state.serialVerified=false; state._storedComponents={}; state._dupComponents={};
+  if (typeof resetCardRearAssy === 'function') resetCardRearAssy();   // v1.32
   show('screen-resume'); loadResumeScreen();
 }
 
@@ -536,11 +546,14 @@ function buildIdentityGrid() {
     </div>
     <div class="card-cell">
       <label class="yellow">HRC Serial No</label>
+      <div id="ra-pick" class="ra-pick" style="display:none;"></div>
       <div class="serial-row">
         <span class="num-prefix" id="prefix-inp-hrc-serial" style="display:none;font-family:var(--font-mono,monospace);font-weight:800;font-size:14px;color:var(--accent);padding:0 2px;white-space:nowrap;"></span><input type="text" id="inp-hrc-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false" onchange="applyComponentPrefix(this);checkComponentDuplicate(this)">
         <img class="serial-thumb" id="thumb-inp-hrc-serial">
-        <button class="cam-btn" onclick="captureSerial('inp-hrc-serial','photo_hrc', false)">📷</button>
+        <button class="cam-btn" id="cam-inp-hrc-serial" onclick="captureSerial('inp-hrc-serial','photo_hrc', false)">📷</button>
+        <span class="ra-tag" id="ra-tag-inp-hrc-serial" style="display:none;"></span>
       </div>
+      <div id="ra-info" class="ra-info" style="display:none;"></div>
     </div>
     <!-- Cylinder Production No | Firing Mech No -->
     <div class="card-cell">
@@ -556,7 +569,8 @@ function buildIdentityGrid() {
       <div class="serial-row">
         <span class="num-prefix" id="prefix-inp-firing-mech" style="display:none;font-family:var(--font-mono,monospace);font-weight:800;font-size:14px;color:var(--accent);padding:0 2px;white-space:nowrap;"></span><input type="text" id="inp-firing-mech" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false" onchange="applyComponentPrefix(this);checkComponentDuplicate(this)">
         <img class="serial-thumb" id="thumb-inp-firing-mech">
-        <button class="cam-btn" onclick="captureSerial('inp-firing-mech','photo_firing_mech', false)">📷</button>
+        <button class="cam-btn" id="cam-inp-firing-mech" onclick="captureSerial('inp-firing-mech','photo_firing_mech', false)">📷</button>
+        <span class="ra-tag" id="ra-tag-inp-firing-mech" style="display:none;"></span>
       </div>
     </div>
     <!-- HFM Serial No | empty -->
@@ -570,6 +584,8 @@ function buildIdentityGrid() {
     </div>
     <div class="card-cell"></div>
     ${hfmProdRow}`;
+  // v1.32: HRC Serial No from the Rear Assy list (rearassy.js)
+  if (typeof refreshCardRearAssy === 'function') setTimeout(refreshCardRearAssy, 150);
 }
 
 // ─── IDENTITY SAVE/RESTORE ────────────────────────────────────────────────────
@@ -613,6 +629,8 @@ function refreshIdentity() {
   const logWrap=document.getElementById('activity-log-wrap');
   if(logWrap) logWrap.style.display=state.buildId?'block':'none';
   updateCardBadges();
+  // v1.32: Rear Assy on the HRC box — after the boxes are filled (100 ms above)
+  if (typeof refreshCardRearAssy === 'function') setTimeout(refreshCardRearAssy, 150);
 }
 
 function resetSerialConfirm() {
