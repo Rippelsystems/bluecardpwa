@@ -31,8 +31,13 @@ const fatpdi = {
   focus: null,          // v1.30: unit serial open in the single-unit view (FAT / PDI), null = list
   focusSnap: null,      // v1.30: its results/remarks when opened — Back without saving restores them
   resAt: {},            // v1.32: resAt[unitSerial][itemId] = inspected_at of the saved result
-  addedCutoff: null     // v1.32: first time an added item (Cylinder Alignment) was saved for this card type
+  addedCutoff: null,    // v1.32: first time an added item (Cylinder Alignment) was saved for this card type
+  by: {},               // v1.35: by[unitSerial][itemId] = operator who saved that result
+  busy: {},             // v1.35: busy[unitSerial] = [{op, since}] — who has the gun open right now
+  _opening: false,      // v1.35: a unit is being opened (one tap = one open)
+  _touchAt: 0           // v1.35: last "still working on it" stamp sent
 };
+const FP_BUSY_MINUTES = 30;   // v1.35: an open gun nobody touched for 30 min no longer shows as in progress
 
 // ════════════════════════════════════════════════════════════════════════
 // v1.32 (12/11/2026) — ITEMS ADDED TO A LIST LATER (added: true in config)
@@ -109,7 +114,9 @@ function openFatPdiTab(stage) {
   // Leaving the Checks tab saves it, same as showSection() does
   const chk = document.getElementById('screen-checks');
   if (chk && chk.classList.contains('active') && state.buildId) {
-    supabaseClient.from('weapon_builds').update({checks: state.checks}).eq('id', state.buildId).then(() => {});
+    // v1.35: only what this tablet changed is sent (app.js _flushChecks)
+    if (typeof _flushChecks === 'function') _flushChecks();
+    else supabaseClient.from('weapon_builds').update({ checks: state.checks }).eq('id', state.buildId).then(() => {});
   }
   openFatPdi(stage, state.cardType);
 }
@@ -142,6 +149,10 @@ function openFatPdi(stage, cardType) {
   fatpdi.units = [];
   fatpdi.resAt = {};
   fatpdi.addedCutoff = null;
+  // v1.35: a gun still open from before is released
+  if (fatpdi.focus && fatpdi._focusStage) _fpRelease(fatpdi.focus, fatpdi._focusStage, fatpdi._focusType);
+  fatpdi.by = {};
+  fatpdi.busy = {};
 
   // 31/10/2026: an acceptance stage is named for what it is — the GRN40
   // "Final Acceptance Checklist" — not "FAT", so it is not confused with the
@@ -365,17 +376,12 @@ async function _loadFatPdiUnits(reset) {
     if (pageSerials.length) {
       const { data: existing, error: exErr } = await _withTimeout(
         supabaseClient.from(_fatpdiTable())
-          .select('unit_serial,item_id,result,remarks,inspected_at')
+          .select('unit_serial,item_id,result,remarks,inspected_by,inspected_at')
           .eq('card_type', fatpdi.cardType).in('unit_serial', pageSerials),
         20000, 'Loading saved results');
       if (exErr) throw exErr;
-      (existing || []).forEach(row => {
-        if (!fatpdi.results[row.unit_serial]) fatpdi.results[row.unit_serial] = {};
-        fatpdi.results[row.unit_serial][row.item_id] = row.result;
-        if (!fatpdi.resAt[row.unit_serial]) fatpdi.resAt[row.unit_serial] = {};
-        fatpdi.resAt[row.unit_serial][row.item_id] = row.inspected_at || null;
-        if (row.remarks) fatpdi.remarks[row.unit_serial] = row.remarks;
-      });
+      (existing || []).forEach(_fpTakeRow);
+      await _fpLoadBusy(pageSerials);   // v1.35: who has a gun open right now
       // v1.32: when did the added item(s) come into use (once per opening)
       if (reset && _fpAddedIds(fatpdi.cardType, fatpdi.stage).length) {
         try { fatpdi.addedCutoff = await _fpLoadAddedCutoff(fatpdi.cardType, fatpdi.stage); }
@@ -501,6 +507,8 @@ function _setFatPdiNotes(inp) { fatpdi.notes[inp.dataset.notesUnit] = inp.value;
 
 // ── Render the grid: rows = units, columns = checklist items ───────────────
 function _renderFatPdiGrid() {
+  const rf = document.getElementById('btn-fatpdi-refresh');   // v1.35: FAT / PDI list only
+  if (rf) rf.style.display = _isAcc() ? 'none' : '';
   if (!_isAcc()) { _renderFatPdiList(); return; }   // v1.30: FAT / PDI = pick a unit, then one at a time
   const saveAll = document.getElementById('btn-fatpdi-save');
   if (saveAll) saveAll.style.display = '';            // the acceptance grid keeps its Save All
@@ -589,14 +597,20 @@ function _renderFatPdiList() {
       + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} FAIL on build card</span>` : '');
     const prog = p.done === 0 ? '<span class="fp-prog" style="color:var(--text-dim,#8fa3c0);">Not started</span>'
       : p.fails ? `<span class="fp-prog" style="color:#d93025;">${p.done}/${p.total} · ${p.fails} FAIL</span>`
-      : p.done === p.total ? '<span class="fp-prog" style="color:#1a9e5c;">✓ All PASS</span>'
+      : p.done === p.total ? '<span class="fp-prog" style="color:#1a9e5c;">✓ Completed — all PASS</span>'
       : `<span class="fp-prog" style="color:#e08f1a;">${p.done}/${p.total}</span>`;
+    // v1.35: who did it, and who has it open right now
+    const who = _fpWho(us);
+    const whoTag = (p.done && who) ? `<br><span class="fp-who">by ${_fpEsc(who)}</span>` : '';
+    const busy = fatpdi.busy[us] || [];
+    const busyTag = busy.length
+      ? `<br><span class="fp-busy">🔒 In progress: ${busy.map(b => String(b.op) === String(state.operator) ? 'you' : 'OP ' + _fpEsc(b.op)).join(', ')}</span>` : '';
     const signedTag = (fatpdi.stage === 'PDI' && u.status === 'COMPLETE')
       ? '<br><span class="fp-prog" style="color:#1a9e5c;font-size:10px;">🖊 SIGNED OFF</span>' : '';
     html += `<tr class="fp-list-row" data-unit="${_fpEsc(us)}" onclick="openFatPdiUnit(this.dataset.unit)">`
       + `<td style="font-family:var(--font-mono,monospace);font-weight:700;">${_fpEsc(us)}${u.sightSerial && u.launcherSerial ? `<br><span style="font-size:10px;color:var(--text-dim,#8fa3c0);">Sight ${_fpEsc(u.sightSerial)}</span>` : ''}${tag}</td>`
       + `<td style="font-size:12px;">${u.trolleyNumber||'—'} / ${u.trolleyPosition||'—'}</td>`
-      + `<td>${prog}${signedTag}</td>`
+      + `<td>${prog}${whoTag}${busyTag}${signedTag}</td>`
       + `<td><button type="button" class="fp-open">Open ›</button></td>`
       + '</tr>';
   });
@@ -607,10 +621,31 @@ function _renderFatPdiList() {
   if (saveAll) saveAll.style.display = 'none';
 }
 
-function openFatPdiUnit(us) {
+async function openFatPdiUnit(us) {
   const u = fatpdi.units.find(x => x.unitSerial === us);
-  if (!u) return;
+  if (!u || fatpdi._opening) return;
+  // v1.35: never open a gun on what this tablet remembers — read it now, so
+  // results saved on another tablet show (and nobody redoes / overwrites them)
+  if (!_isAcc()) {
+    fatpdi._opening = true;
+    try {
+      try { await _fpReadFresh([us], true); }
+      catch (e) { showToast(`⚠ Could not read the latest for ${us} — check Wi-Fi. Showing what was loaded before.`, 'warn'); }
+      const others = (fatpdi.busy[us] || []).filter(b => String(b.op) !== String(state.operator));
+      if (others.length && !fatpdi.adminPreview) {
+        const who = others.map(b => `OP ${b.op} (since ${_fpTime(b.since)})`).join(', ');
+        if (!confirm(`🔒 ${us} is open on another tablet: ${who}.\n\n` +
+                     `More than one person may work on a gun — each save keeps the items the other person saved.\n\n` +
+                     `Open it and work on it too?`)) {
+          _renderFatPdiList();
+          return;
+        }
+      }
+      if (!fatpdi.adminPreview) _fpClaim(us);
+    } finally { fatpdi._opening = false; }
+  }
   fatpdi.focus = us;
+  fatpdi._focusStage = fatpdi.stage; fatpdi._focusType = fatpdi.cardType;
   fatpdi.focusSnap = { results: { ...(fatpdi.results[us] || {}) }, remarks: fatpdi.remarks[us] || '' };
   _renderFatPdiUnit();
   const lv = document.getElementById('fatpdi-list-view'), uv = document.getElementById('fatpdi-unit-view');
@@ -631,12 +666,13 @@ function _renderFatPdiUnit() {
       <div class="fp-stage">${stageName} · ${_fpEsc(fatpdi.docCode || '')}</div>
       <div class="fp-serial">${_fpEsc(us)}</div>
       <div class="fp-meta">Trolley ${u.trolleyNumber||'—'} · Pos ${u.trolleyPosition||'—'}${u.sightSerial && u.launcherSerial ? ` · Sight ${_fpEsc(u.sightSerial)}` : ''}${u.status !== 'COMPLETE' ? ` · build ${_fpEsc(u.status||'IN PROGRESS')}` : ''}${fatpdi.adminPreview ? ' · ADMIN PREVIEW (not saved)' : ''}</div>
+      ${_fpBandStatus(us)}
     </div>
     <div id="fp-unit-count" style="font-size:12px;color:var(--text-dim,#8fa3c0);margin:0 0 8px 2px;"></div>`;
   items.forEach((it, i) => {
     const cur = res[it.id] || '';
     html += `<div class="fp-row" data-item="${_fpEsc(it.id)}" data-result="${cur}">
-        <span class="fp-label"><span class="fp-no">${String(i + 1).padStart(2, '0')}</span>${_fpEsc(it.label)}${it.added && !reqIds.has(it.id) ? '<br><span style="font-size:10px;font-weight:400;opacity:0.75;">not needed on this gun — FAT done before this item was added</span>' : ''}</span>
+        <span class="fp-label"><span class="fp-no">${String(i + 1).padStart(2, '0')}</span>${_fpEsc(it.label)}${it.added && !reqIds.has(it.id) ? '<br><span style="font-size:10px;font-weight:400;opacity:0.75;">not needed on this gun — FAT done before this item was added</span>' : ''}${_fpSavedLine(us, it.id)}</span>
         <div class="fp-btns">
           <button type="button" class="fp-btn pass ${cur==='PASS'?'selected':''}" data-item="${_fpEsc(it.id)}" data-val="PASS" onclick="_fpSet(this)">PASS</button>
           <button type="button" class="fp-btn fail ${cur==='FAIL'?'selected':''}" data-item="${_fpEsc(it.id)}" data-val="FAIL" onclick="_fpSet(this)">FAIL</button>
@@ -844,6 +880,7 @@ function _fpSet(btn) {
   if (!fatpdi.results[us]) fatpdi.results[us] = {};
   fatpdi.results[us][item] = val;
   fatpdi.touched[us] = true;
+  _fpTouch(us);   // v1.35: still working on it
   const row = btn.closest('.fp-row');
   if (row) {
     row.dataset.result = val;
@@ -856,6 +893,7 @@ function _fpRemarks(ta) {
   if (!fatpdi.focus) return;
   fatpdi.remarks[fatpdi.focus] = ta.value;
   fatpdi.touched[fatpdi.focus] = true;
+  _fpTouch(fatpdi.focus);   // v1.35
 }
 
 function _fpChanged() {
@@ -875,12 +913,17 @@ function closeFatPdiUnit(skipAsk) {
     fatpdi.results[us] = { ...fatpdi.focusSnap.results };
     if (fatpdi.focusSnap.remarks) fatpdi.remarks[us] = fatpdi.focusSnap.remarks; else delete fatpdi.remarks[us];
   }
-  fatpdi.focus = null; fatpdi.focusSnap = null;
+  const st = fatpdi._focusStage, ct = fatpdi._focusType;
+  fatpdi.focus = null; fatpdi.focusSnap = null; fatpdi._focusStage = null; fatpdi._focusType = null;
   _fpShowList();
   _renderFatPdiList();
   if (us) {
     const row = [...document.querySelectorAll('#fatpdi-grid tr[data-unit]')].find(r => r.dataset.unit === us);
     if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
+  }
+  // v1.35: let the others see it is free, and show what they did meanwhile
+  if (us && st && !_isAcc()) {
+    _fpRelease(us, st, ct).then(() => _fpRefreshList());
   }
 }
 
@@ -912,6 +955,263 @@ function _setFatPdiRemarks(inp) {
   fatpdi.touched[inp.dataset.remarksUnit] = true;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// v1.35 (12/11/2026) — SEVERAL PEOPLE ON ONE GUN (floor feedback)
+// Two people on FAT finished a gun; the second did not see it was complete
+// and his save overwrote the first. Also: a save re-wrote EVERY item on the
+// gun, so items done by someone else got this operator's name and time.
+// Now:
+//   • a gun is read fresh from the database when it is opened, and every
+//     saved item shows who did it and when;
+//   • the list shows 🔒 In progress: OP …  (who has the gun open, from
+//     fatpdi_activity — cleared on Save / Back, or after 30 min untouched),
+//     ✓ Completed, and who did the work. Someone else can still open it
+//     (asked first) — more than one person may work on a gun;
+//   • Save writes only the items changed on this tablet. Just before saving
+//     it reads the gun again; an item someone else saved differently in the
+//     meantime is shown and nothing is overwritten unless the operator says so;
+//   • the list refreshes on Back / Save, on ↻ Refresh, and every minute.
+// GRN40 Final Acceptance keeps its own grid (unchanged).
+// ════════════════════════════════════════════════════════════════════════
+function _fpTime(iso) {
+  const d = new Date(iso || '');
+  if (isNaN(d)) return '?';
+  return d.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short' }) + ' '
+       + d.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function _fpTakeRow(row) {
+  const us = row.unit_serial;
+  if (!fatpdi.results[us]) fatpdi.results[us] = {};
+  fatpdi.results[us][row.item_id] = row.result;
+  if (!fatpdi.resAt[us]) fatpdi.resAt[us] = {};
+  fatpdi.resAt[us][row.item_id] = row.inspected_at || null;
+  if (!fatpdi.by[us]) fatpdi.by[us] = {};
+  fatpdi.by[us][row.item_id] = row.inspected_by || null;
+  if (row.remarks) fatpdi.remarks[us] = row.remarks;
+}
+// operators who saved items on this gun, e.g. "OP 022, OP 030"
+function _fpWho(us) {
+  const ops = [...new Set(Object.values(fatpdi.by[us] || {}).filter(Boolean).map(String))];
+  return ops.map(o => 'OP ' + o).join(', ');
+}
+function _fpSavedLine(us, itemId) {
+  const snap = (fatpdi.focusSnap && fatpdi.focusSnap.results) || {};
+  const res = snap[itemId];
+  if (!res) return '';
+  const by = (fatpdi.by[us] || {})[itemId], at = (fatpdi.resAt[us] || {})[itemId];
+  return `<br><span class="fp-saved">saved ${_fpEsc(res)} · ${by ? 'OP ' + _fpEsc(by) : 'OP ?'}${at ? ' · ' + _fpEsc(_fpTime(at)) : ''}</span>`;
+}
+function _fpBandStatus(us) {
+  const out = [];
+  const p = _fpProgress(us), snap = (fatpdi.focusSnap && fatpdi.focusSnap.results) || {};
+  const savedDone = _fpRequiredItems(fatpdi.cardType, fatpdi.stage, snap, fatpdi.resAt[us], fatpdi.addedCutoff)
+                      .filter(it => snap[it.id] === 'PASS').length;
+  if (p.total && savedDone === p.total) out.push('✓ Completed — all PASS');
+  const who = _fpWho(us); if (who) out.push('Done by ' + who);
+  const others = (fatpdi.busy[us] || []).filter(b => String(b.op) !== String(state.operator));
+  if (others.length) out.push('🔒 Also open on: ' + others.map(b => 'OP ' + b.op).join(', '));
+  return out.length ? `<div class="fp-meta" style="font-weight:700;">${_fpEsc(out.join(' · '))}</div>` : '';
+}
+
+// results + who-is-busy for these guns, straight from the database.
+// forOpen = reading the gun that is being opened (anything else skips the
+// gun open on screen, so a refresh never touches unsaved marks).
+async function _fpReadFresh(serials, forOpen) {
+  if (_isAcc() || !serials.length) return;
+  for (let i = 0; i < serials.length; i += 100) {
+    const part = serials.slice(i, i + 100);
+    const { data, error } = await _withTimeout(
+      supabaseClient.from(_fatpdiTable())
+        .select('unit_serial,item_id,result,remarks,inspected_by,inspected_at')
+        .eq('card_type', fatpdi.cardType).in('unit_serial', part),
+      20000, 'Reading the latest results');
+    if (error) throw error;
+    const keep = forOpen ? null : fatpdi.focus;
+    part.forEach(us => {
+      if (us === keep) return;
+      delete fatpdi.results[us]; delete fatpdi.resAt[us]; delete fatpdi.by[us]; delete fatpdi.remarks[us];
+    });
+    (data || []).forEach(r => { if (r.unit_serial !== keep) _fpTakeRow(r); });
+  }
+  await _fpLoadBusy(serials);
+}
+async function _fpLoadBusy(serials) {
+  if (_isAcc() || !serials.length) return;
+  const since = new Date(Date.now() - FP_BUSY_MINUTES * 60000).toISOString();
+  try {
+    for (let i = 0; i < serials.length; i += 100) {
+      const part = serials.slice(i, i + 100);
+      const { data, error } = await _withTimeout(
+        supabaseClient.from('fatpdi_activity')
+          .select('unit_serial,operator_number,started_at,last_seen')
+          .eq('stage', fatpdi.stage).eq('card_type', fatpdi.cardType)
+          .in('unit_serial', part).gte('last_seen', since),
+        10000, 'Reading who is busy');
+      if (error) throw error;
+      part.forEach(us => { delete fatpdi.busy[us]; });
+      (data || []).forEach(r => {
+        (fatpdi.busy[r.unit_serial] = fatpdi.busy[r.unit_serial] || []).push({ op: r.operator_number, since: r.started_at });
+      });
+    }
+  } catch (e) { console.warn('[FAT/PDI] in-progress list not read', e); }   // never stops the page
+}
+function _fpClaimRow(us, stage, ct) {
+  return { stage: stage || fatpdi.stage, card_type: ct || fatpdi.cardType, unit_serial: us,
+           operator_number: String(state.operator || '?'), last_seen: new Date().toISOString() };
+}
+function _fpClaim(us) {
+  fatpdi._touchAt = Date.now();
+  // best effort — the in-progress tag must never stop anybody working
+  return (async () => {
+    try {
+      const r = await supabaseClient.from('fatpdi_activity')
+        .upsert(_fpClaimRow(us), { onConflict: 'stage,card_type,unit_serial,operator_number' });
+      if (r && r.error) console.warn('[FAT/PDI] claim', r.error);
+    } catch (e) { console.warn('[FAT/PDI] claim', e); }
+  })();
+}
+// still working on it — at most once a minute
+function _fpTouch(us) {
+  if (!us || fatpdi.adminPreview || _isAcc()) return;
+  if (Date.now() - (fatpdi._touchAt || 0) < 60000) return;
+  _fpClaim(us);
+}
+function _fpRelease(us, stage, ct) {
+  if (!us) return Promise.resolve();
+  return (async () => {
+    try {
+      const r = await supabaseClient.from('fatpdi_activity').delete()
+        .eq('stage', stage || fatpdi.stage).eq('card_type', ct || fatpdi.cardType)
+        .eq('unit_serial', us).eq('operator_number', String(state.operator || '?'));
+      if (r && r.error) console.warn('[FAT/PDI] release', r.error);
+    } catch (e) { console.warn('[FAT/PDI] release', e); }
+  })();
+}
+// the list, read again (Back / Save / ↻ Refresh / every minute)
+async function _fpRefreshList(btn) {
+  if (_isAcc() || fatpdi.focus || !fatpdi.units.length) return;
+  const txt = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+  try {
+    await _fpReadFresh(fatpdi.units.map(u => u.unitSerial), false);
+    if (!fatpdi.focus) _renderFatPdiList();
+  } catch (e) {
+    if (btn) showToast('⚠ Could not refresh — ' + ((e && e.message) || e), 'warn');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = txt; }
+  }
+}
+setInterval(() => {
+  const scr = typeof document !== 'undefined' && document.getElementById('screen-fatpdi');
+  if (scr && scr.classList.contains('active') && !fatpdi.focus && !fatpdi._opening && fatpdi.stage) _fpRefreshList();
+}, 60000);
+
+// Save ONE gun: only the items changed on this tablet; read the gun first
+// and stop if someone else saved a different result on one of them.
+async function _fpSaveUnitSafe(us) {
+  const u = fatpdi.units.find(x => x.unitSerial === us);
+  if (!u) return false;
+  const snap = fatpdi.focusSnap || { results: {}, remarks: '' };
+  const mine = fatpdi.results[us] || (fatpdi.results[us] = {});
+  const items = _fpItems();
+  let changed = items.filter(it => mine[it.id] && mine[it.id] !== (snap.results[it.id] || ''));
+  const remarksChanged = (fatpdi.remarks[us] || '') !== (snap.remarks || '');
+  if (!changed.length && !remarksChanged) { showToast(`Nothing changed on ${us}`, 'warn'); return false; }
+
+  const btn = document.getElementById('btn-fp-save-unit');
+  const btnText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    // 1. the gun as it is in the database right now
+    const { data: fresh, error: fErr } = await _withTimeout(
+      supabaseClient.from(_fatpdiTable()).select('item_id,result,remarks,inspected_by,inspected_at')
+        .eq('card_type', fatpdi.cardType).eq('unit_serial', us),
+      15000, 'Reading the latest before saving');
+    if (fErr) throw fErr;
+    const db = {}; (fresh || []).forEach(r => { db[r.item_id] = r; });
+
+    // 2. saved differently by someone else since this gun was opened?
+    const conflicts = changed.filter(it => {
+      const dbRes = db[it.id] ? db[it.id].result : '';
+      return dbRes !== (snap.results[it.id] || '') && dbRes !== mine[it.id];
+    });
+    if (conflicts.length) {
+      const lines = conflicts.map(it => {
+        const d = db[it.id];
+        return `• ${it.label}: OP ${d.inspected_by || '?'} saved ${d.result} (${_fpTime(d.inspected_at)}) — you marked ${mine[it.id]}`;
+      }).join('\n');
+      if (!confirm(`⚠ ${us} was changed on another tablet while you had it open:\n\n${lines}\n\n` +
+                   `OK = save YOUR result over theirs\nCancel = keep THEIR result (your other marks stay on screen)`)) {
+        conflicts.forEach(it => { mine[it.id] = db[it.id].result; });
+        _fpAdoptDb(us, fresh || []);
+        _renderFatPdiUnit();
+        showToast('Their result kept — check the gun and save again', 'warn');
+        return false;
+      }
+    }
+    // an item someone else already saved with the same result needs no save
+    changed = changed.filter(it => !(db[it.id] && db[it.id].result === mine[it.id] && conflicts.indexOf(it) < 0));
+
+    if (!changed.length && remarksChanged && !(fresh || []).length) {
+      showToast('Mark at least one item before saving remarks', 'warn'); return false;
+    }
+    // 3. write only those items
+    const now = new Date().toISOString();
+    const rows = changed.map(it => {
+      const r = {
+        unit_serial: us, launcher_serial: u.launcherSerial, sight_serial: u.sightSerial,
+        trolley_number: u.trolleyNumber, trolley_position: u.trolleyPosition,
+        card_type: fatpdi.cardType, item_id: it.id, item_label: it.label, result: mine[it.id],
+        inspected_by: state.operator, inspected_at: now, doc_code: fatpdi.docCode, updated_at: now
+      };
+      if (remarksChanged) r.remarks = fatpdi.remarks[us] || null;
+      return r;
+    });
+    if (rows.length) {
+      const { error } = await supabaseClient.from(_fatpdiTable())
+        .upsert(rows, { onConflict: 'unit_serial,card_type,item_id' });
+      if (error) throw error;
+    }
+    if (remarksChanged) {
+      const { error: rErr } = await supabaseClient.from(_fatpdiTable())
+        .update({ remarks: fatpdi.remarks[us] || null, updated_at: now })
+        .eq('card_type', fatpdi.cardType).eq('unit_serial', us);
+      if (rErr) throw rErr;
+    }
+    // 4. the screen follows what is now saved
+    const myRemarks = fatpdi.remarks[us] || '';
+    const added = _fpAddedIds(fatpdi.cardType, fatpdi.stage);
+    (fresh || []).forEach(r => { if (!changed.some(it => it.id === r.item_id)) _fpTakeRow({ ...r, unit_serial: us }); });
+    rows.forEach(r => {
+      _fpTakeRow({ ...r, remarks: r.remarks || fatpdi.remarks[us] });
+      if (added.includes(r.item_id) && !fatpdi.addedCutoff) fatpdi.addedCutoff = r.inspected_at;
+    });
+    if (remarksChanged) { if (myRemarks) fatpdi.remarks[us] = myRemarks; else delete fatpdi.remarks[us]; }
+    fatpdi.focusSnap = { results: { ...(fatpdi.results[us] || {}) }, remarks: fatpdi.remarks[us] || '' };
+    showToast(`✅ ${us} — ${fatpdi.stage} saved (${rows.length} items${remarksChanged ? ' + remarks' : ''})`, 'ok');
+    return true;
+  } catch (e) {
+    console.error('[FAT/PDI] save error', e);
+    showToast('❌ Save failed — ' + ((e && e.message) || e), 'error');
+    return false;
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = btnText; }
+  }
+}
+// take the database's results as the saved state; marks not saved yet stay
+function _fpAdoptDb(us, fresh) {
+  const snap = (fatpdi.focusSnap && fatpdi.focusSnap.results) || {};
+  const mine = fatpdi.results[us] || {};
+  const unsaved = {};
+  Object.keys(mine).forEach(id => { if (mine[id] && mine[id] !== (snap[id] || '')) unsaved[id] = mine[id]; });
+  delete fatpdi.results[us]; delete fatpdi.resAt[us]; delete fatpdi.by[us];
+  fresh.forEach(r => _fpTakeRow({ ...r, unit_serial: us }));
+  const dbRes = { ...(fatpdi.results[us] || {}) };
+  Object.keys(unsaved).forEach(id => { if (unsaved[id] === dbRes[id]) delete unsaved[id]; });
+  fatpdi.results[us] = { ...dbRes, ...unsaved };
+  fatpdi.focusSnap = { results: dbRes, remarks: fatpdi.focusSnap ? fatpdi.focusSnap.remarks : '' };
+}
+
 // ── Save all entered results for this stage+cardType ───────────────────────
 async function saveFatPdi(onlyUnit) {
   // v1.30: onlyUnit = save just that unit (the single-unit view); returns true when saved
@@ -919,6 +1219,8 @@ async function saveFatPdi(onlyUnit) {
     showToast('🔓 Admin Preview mode — nothing is saved. Exit preview to record real results.', 'warn');
     return false;
   }
+  // v1.35: one gun (FAT / PDI) — only what was changed here, checked first
+  if (onlyUnit && !_isAcc()) return _fpSaveUnitSafe(onlyUnit);
   const rows = [];
   const cfg = _stageCfg();
   // 31/10/2026 — Final Acceptance rules (the paper form's ACCEPT YES / NO):
