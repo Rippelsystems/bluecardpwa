@@ -12,6 +12,8 @@
 //     ("what is done is done").
 //   • The pick can be changed until the card is signed off (a faulty unit
 //     found at FAT / PDI); the one taken off goes back on the list.
+//   • v1.34: picking one opens a confirm box (HRC, firing mech, assembler) —
+//     nothing is taken until Confirm; Cancel leaves the card unchanged.
 //   • A rear assembly can be corrected by its assembler while it is not on a
 //     gun; Admin (PIN) can correct or delete it any time — if it is already on
 //     a gun, that gun's card gets the corrected numbers too.
@@ -314,7 +316,7 @@ async function _raCardLoadPick() {
   _raCardRender();
 }
 
-function pickCardRearAssy(val) {
+async function pickCardRearAssy(val) {
   const s = state.rearAssy || {};
   if (!val) return;
   if (val === '__manual') {
@@ -324,6 +326,25 @@ function pickCardRearAssy(val) {
     return;
   }
   const r = (s.list || []).find(x => x.id === val); if (!r) return;
+  // v1.34 (12/11/2026): nothing is taken until the operator has seen the
+  // selection and confirmed it. The list goes back to "Pick…" straight away,
+  // so Cancel leaves the card exactly as it was.
+  const sel = document.getElementById('sel-rear-assy'); if (sel) sel.value = '';
+  if (!(await _raConfirmPick(r))) {
+    showToast('Cancelled — no rear assembly taken', 'warn');
+    return;
+  }
+  // still free? (another tablet may have taken it while the box was open)
+  try {
+    const { data, error } = await supabaseClient.from('rear_assemblies')
+      .select('id,build_id').eq('id', r.id).limit(1);
+    if (!error && (!data || !data.length || data[0].build_id)) {
+      showToast(`🚫 Rear Assy ${r.hrc_serial_no} was just taken by another gun — pick another`, 'error');
+      await _raCardLoadPick();
+      return;
+    }
+  } catch (e) { console.warn('[RearAssy] re-check', e); }   // the database link + duplicate gate still apply
+  if (state.rearAssy !== s) return;                          // card changed while the box was open
   const h = document.getElementById('inp-hrc-serial'), f = document.getElementById('inp-firing-mech');
   if (h) h.value = _raShow('inp-hrc-serial', r.hrc_serial_no);
   if (f) f.value = _raShow('inp-firing-mech', r.firing_mech_no);
@@ -335,6 +356,42 @@ function pickCardRearAssy(val) {
   if (typeof checkComponentDuplicate === 'function') { if (h) checkComponentDuplicate(h); if (f) checkComponentDuplicate(f); }
   showToast(`🔩 Rear Assy ${r.hrc_serial_no} — by ${_raWho(r)}`, 'ok');
   if (typeof scheduleAutoSave === 'function') scheduleAutoSave(800);
+}
+
+// v1.34 (12/11/2026): CONFIRM THE PICK — shows the selected rear assembly
+// big and clear; the operator checks it against the parts in his hand.
+// Resolves true = Confirm, false = Cancel (or tapping outside the box).
+function _raConfirmPick(r) {
+  return new Promise(resolve => {
+    const old = document.getElementById('ra-confirm'); if (old) old.remove();
+    const ov = document.createElement('div');
+    ov.id = 'ra-confirm';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(10,22,40,0.62);z-index:200;display:flex;'
+      + 'align-items:center;justify-content:center;padding:18px;';
+    const serial = state.formData.launcher_serial || '';
+    ov.innerHTML = `<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:18px 18px 14px;box-shadow:0 10px 30px rgba(0,0,0,0.35);border-top:6px solid #5d4037;">
+        <div style="font-size:12px;font-weight:800;letter-spacing:0.08em;color:#5d4037;">🔩 CONFIRM REAR ASSY FOR THIS GUN</div>
+        <div style="font-size:12.5px;color:#6b7e99;margin:4px 0 12px;">Check the numbers against the parts in your hand${serial ? ` — gun <b style="color:#1a2236;">${_raEsc(serial)}</b>` : ''}.</div>
+        <div style="background:#f6efec;border:1px solid #d7c7bf;border-radius:10px;padding:10px 12px;margin-bottom:8px;">
+          <div style="font-size:10px;font-weight:800;letter-spacing:0.08em;color:#8d6e63;">HRC SERIAL NO</div>
+          <div id="ra-confirm-hrc" style="font-family:var(--font-mono,monospace);font-size:22px;font-weight:800;color:#3e2723;">${_raEsc(r.hrc_serial_no)}</div>
+        </div>
+        <div style="background:#f6efec;border:1px solid #d7c7bf;border-radius:10px;padding:10px 12px;margin-bottom:10px;">
+          <div style="font-size:10px;font-weight:800;letter-spacing:0.08em;color:#8d6e63;">FIRING MECH NO</div>
+          <div id="ra-confirm-fm" style="font-family:var(--font-mono,monospace);font-size:22px;font-weight:800;color:#3e2723;">${_raEsc(r.firing_mech_no)}</div>
+        </div>
+        <div style="font-size:12.5px;color:#3e2723;margin-bottom:14px;">Rear Assy by <b>${_raEsc(_raWho(r))}</b> · ${_raEsc(_raWhen(r.assembled_at))}</div>
+        <div style="display:flex;gap:10px;">
+          <button type="button" id="ra-confirm-no" style="flex:1;padding:13px 6px;border-radius:9px;border:2px solid #d93025;background:#fff;color:#d93025;font-size:14px;font-weight:800;cursor:pointer;">✕ Cancel</button>
+          <button type="button" id="ra-confirm-yes" style="flex:1.4;padding:13px 6px;border-radius:9px;border:none;background:linear-gradient(180deg,#20c070 0%,#15a055 100%);color:#fff;font-size:14px;font-weight:800;cursor:pointer;">✓ Confirm — put on this gun</button>
+        </div>
+      </div>`;
+    const done = ok => { ov.remove(); resolve(ok); };
+    ov.addEventListener('click', e => { if (e.target === ov) done(false); });
+    document.body.appendChild(ov);
+    ov.querySelector('#ra-confirm-no').onclick = () => done(false);
+    ov.querySelector('#ra-confirm-yes').onclick = () => done(true);
+  });
 }
 
 async function changeCardRearAssy() {
