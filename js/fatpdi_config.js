@@ -14,6 +14,13 @@
 //              build cards; results go to weapon_fat_results as before
 //              (extra columns: grn40_acceptance_31Oct.sql).
 //
+// v1.32 (12/11/2026): FAT "Cylinder Alignment" (id f13, after Cylinder Torque)
+// on RLL and XRGL40, at the floor's request. Marked added: true — a gun whose
+// FAT was already done on the old list before Cylinder Alignment was first
+// used stays FAT-complete without it (fatpdi.js _fpRequiredItems); every
+// FAT from then on needs it. Item ids never change, so saved results stay
+// matched; f13 is simply listed in its place on the page.
+//
 // FAT and PDI are two entirely separate stages/tables (weapon_fat_results /
 // weapon_pdi_results) — this file only supplies the *item list + doc_code*
 // for each, it does not merge the stages.
@@ -33,6 +40,7 @@ const FATPDI_TYPES = {
         { id:'f05', label:'Index Pin' },
         { id:'f06', label:'Manual Release' },
         { id:'f07', label:'Cylinder Torque' },
+        { id:'f13', label:'Cylinder Alignment', added: true },   // v1.32 (12/11/2026)
         { id:'f08', label:'Headspace' },
         { id:'f09', label:'Minimum Bore' },
         { id:'f10', label:'Maximum Bore' },
@@ -73,6 +81,7 @@ const FATPDI_TYPES = {
         { id:'f06', label:'Index Pin' },
         { id:'f07', label:'Manual Release' },
         { id:'f08', label:'Cylinder Torque' },
+        { id:'f13', label:'Cylinder Alignment', added: true },   // v1.32 (12/11/2026)
         { id:'f09', label:'Headspace' },
         { id:'f10', label:'Minimum Bore' },
         { id:'f11', label:'Maximum Bore' },
