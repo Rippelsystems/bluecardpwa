@@ -59,7 +59,9 @@ function openRearAssy() {
   // leaving Checks: keep the ticks, same as the other tabs do
   const chk = document.getElementById('screen-checks');
   if (chk && chk.classList.contains('active') && state.buildId) {
-    supabaseClient.from('weapon_builds').update({ checks: state.checks }).eq('id', state.buildId).then(() => {});
+    // v1.35: only what this tablet changed is sent (app.js _flushChecks)
+    if (typeof _flushChecks === 'function') _flushChecks();
+    else supabaseClient.from('weapon_builds').update({ checks: state.checks }).eq('id', state.buildId).then(() => {});
   }
   const b = document.getElementById('ra-card-badge'); if (b) b.textContent = state.cardType;
   const o = document.getElementById('ra-op'); if (o) o.textContent = state.operator;
