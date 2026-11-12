@@ -26,6 +26,8 @@ const fatpdi = {
   totalCount: 0,         // load them all at once, only FATPDI_PAGE_SIZE per page
   filterContract: '',
   filterSearch: '',
+  filterTrolley: '',    // v1.33: trolley number drop-down ('' = all trolleys)
+  filterPos: '',        // v1.33: trolley position drop-down ('' = all positions)
   focus: null,          // v1.30: unit serial open in the single-unit view (FAT / PDI), null = list
   focusSnap: null,      // v1.30: its results/remarks when opened — Back without saving restores them
   resAt: {},            // v1.32: resAt[unitSerial][itemId] = inspected_at of the saved result
@@ -126,6 +128,8 @@ function openFatPdi(stage, cardType) {
   fatpdi.totalCount = 0;
   fatpdi.filterContract = '';
   fatpdi.filterSearch = '';
+  fatpdi.filterTrolley = '';
+  fatpdi.filterPos = '';
   const typeCfg = FATPDI_TYPES[cardType];
   const stageCfg = typeCfg[stage];
   fatpdi.docCode = stageCfg.docCode;
@@ -155,6 +159,7 @@ function openFatPdi(stage, cardType) {
   document.getElementById('fatpdi-op').textContent = state.operator || '—';
   const searchInp = document.getElementById('fatpdi-filter-search');
   if (searchInp) searchInp.value = '';
+  _fatpdiFillTrolleys();
   _updateAdminPreviewUI();
   _loadFatPdiContracts();
 
@@ -188,9 +193,31 @@ async function _loadFatPdiContracts() {
 // page from the top (reset); otherwise it appends the next page.
 function _fatpdiLoadMore() { _loadFatPdiUnits(fatpdi.units.length === 0); }
 
+// v1.33 (12/11/2026): Trolley No + Trolley Position drop-downs — the same
+// Trolley 1–20 / Pos 1–56 lists as the build card (populateTrolley), so the
+// floor picks the gun in front of them
+function _fatpdiFillTrolleys() {
+  const sel = document.getElementById('fatpdi-filter-trolley');
+  if (sel) {
+    let html = '<option value="">All Trolleys</option>';
+    for (let i = 1; i <= 20; i++) html += `<option value="${i}">Trolley ${i}</option>`;
+    sel.innerHTML = html; sel.value = '';
+  }
+  const pos = document.getElementById('fatpdi-filter-pos');
+  if (pos) {
+    let html = '<option value="">All Positions</option>';
+    for (let i = 1; i <= 56; i++) html += `<option value="${i}">Pos ${i}</option>`;
+    pos.innerHTML = html; pos.value = '';
+  }
+}
+
 function _fatpdiApplyFilter() {
   fatpdi.focus = null; fatpdi.focusSnap = null; _fpShowList();
   fatpdi.filterContract = document.getElementById('fatpdi-filter-contract').value;
+  const tSel = document.getElementById('fatpdi-filter-trolley');
+  fatpdi.filterTrolley = tSel ? tSel.value : '';
+  const pSel = document.getElementById('fatpdi-filter-pos');
+  fatpdi.filterPos = pSel ? pSel.value : '';
   fatpdi.filterSearch = document.getElementById('fatpdi-filter-search').value.trim().toUpperCase();
   fatpdi.offset = 0;
   fatpdi.units = [];
@@ -276,6 +303,8 @@ async function _loadFatPdiUnits(reset) {
     // grid. The FAIL rule stays: an open FAIL on the build card holds the
     // unit back (shown under Admin Preview only).
     if (fatpdi.filterContract) q = q.eq('contract_name', fatpdi.filterContract);
+    if (fatpdi.filterTrolley) q = q.eq('trolley_number', parseInt(fatpdi.filterTrolley, 10));
+    if (fatpdi.filterPos) q = q.eq('trolley_position', parseInt(fatpdi.filterPos, 10));
     if (fatpdi.filterSearch) q = q.ilike(serialCol, `%${fatpdi.filterSearch}%`);
     q = q.order('trolley_number').order('trolley_position')
          .range(fatpdi.offset, fatpdi.offset + FATPDI_PAGE_SIZE - 1);
@@ -385,6 +414,8 @@ async function _loadAcceptanceUnits(reset, el) {
     .select('serial_number,project,customer,status,trolley_number,trolley_position')
     .eq('card_type', fatpdi.cardType);
   if (fatpdi.filterContract) q = q.eq('project', fatpdi.filterContract);
+  if (fatpdi.filterTrolley) q = q.eq('trolley_number', parseInt(fatpdi.filterTrolley, 10));
+  if (fatpdi.filterPos) q = q.eq('trolley_position', parseInt(fatpdi.filterPos, 10));
   if (fatpdi.filterSearch) q = q.ilike('serial_number', `%${fatpdi.filterSearch}%`);
   q = q.order('serial_number').range(fatpdi.offset, fatpdi.offset + FATPDI_PAGE_SIZE - 1);
 
