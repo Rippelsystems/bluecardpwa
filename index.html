@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
-  <link rel="stylesheet" href="css/style.css?v=1.30">
+  <link rel="stylesheet" href="css/style.css?v=1.32">
   <!-- ── SITE ACCESS GATE (Rippel Matrix BCDS) — see js/sitegate.js ───────── -->
   <style>
     html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
@@ -93,7 +93,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:8px;font-size:13px;font-weight:700;color:#ffffff;letter-spacing:0.08em;text-align:center;font-family:monospace;">
-    v1.30 · 11 Nov 2026
+    v1.32 · 12 Nov 2026
   </div>
 
 </section>
@@ -131,6 +131,45 @@
     <button class="btn btn-primary" onclick="startNewCard()">+ Start New Build Card</button>
     <button class="btn btn-secondary" style="margin-top:8px;" onclick="changeCardType()">🔄 Change Card Type / End Session</button>
 
+  </div>
+</section>
+
+<!-- ══ REAR ASSY (v1.32, 12/11/2026) ═════════════════════════════════════ -->
+<section id="screen-rearassy" class="screen">
+  <div class="topbar">
+    <span class="card-badge" id="ra-card-badge">RLL</span>
+    <span class="title">Rear Assy — HRC + Firing Mech</span>
+    <span class="operator-tag">OP <span id="ra-op">—</span></span>
+  </div>
+  <div class="content">
+    <div class="ra-box" id="ra-form-box">
+      <h3 id="ra-form-title">NEW REAR ASSEMBLY</h3>
+      <div class="ra-who" id="ra-form-who"></div>
+      <div class="ra-field">
+        <label>HRC Serial No</label>
+        <div class="serial-row"><span class="ra-prefix" id="prefix-ra-hrc" style="display:none;"></span>
+          <input type="text" id="ra-hrc" placeholder="number on the HRC" autocapitalize="characters" spellcheck="false" autocomplete="off"></div>
+      </div>
+      <div class="ra-field">
+        <label>Firing Mech No</label>
+        <div class="serial-row"><span class="ra-prefix" id="prefix-ra-fm" style="display:none;"></span>
+          <input type="text" id="ra-fm" placeholder="number on the firing mech" autocapitalize="characters" spellcheck="false" autocomplete="off"></div>
+      </div>
+      <div id="ra-msg" style="display:none;font-size:12.5px;font-weight:700;margin-bottom:8px;"></div>
+      <button class="btn btn-primary" id="btn-ra-save" style="background:#5d4037;border-color:#5d4037;" onclick="saveRearAssy()">💾 Save Rear Assy</button>
+      <button class="btn btn-secondary" id="btn-ra-cancel" style="display:none;margin-top:8px;" onclick="_raStartNew()">✕ Cancel — back to a new rear assembly</button>
+      <button class="btn btn-secondary" id="btn-ra-delete" style="display:none;margin-top:8px;background:transparent;border-color:#d93025;color:#d93025;" onclick="deleteRearAssy()">🗑 Delete this rear assembly</button>
+    </div>
+
+    <div class="ra-list-head">NOT YET ON A GUN <span class="ra-count" id="ra-free-count">0</span>
+      <button type="button" class="ra-link" style="margin-left:auto;" onclick="loadRearAssyLists()">↻ Refresh</button></div>
+    <div id="ra-free-list"></div>
+    <div class="ra-list-head" style="margin-top:14px;">LATEST ON A GUN</div>
+    <div id="ra-gun-list"></div>
+    <div style="font-size:11px;color:var(--text-dim);margin:10px 2px 90px;line-height:1.5;">
+      ✎ Correct = the assembler, while it is not on a gun. 🔐 Admin change = Admin PIN, any time —
+      if it is already on a gun, that gun's build card is corrected too.
+    </div>
   </div>
 </section>
 
@@ -228,6 +267,45 @@
   .fp-remarks { width:100%; min-height:64px; font-size:13px; }
   .fp-actions .btn { margin-top:8px; }
   .fp-save { background:var(--fp-band) !important; border-color:var(--fp-band) !important; }
+  /* v1.31: final sign-off on the PDI page */
+  .fp-final { border:1px solid var(--fp-edge); background:#fff; border-radius:10px; padding:12px 13px; margin:12px 0 4px; }
+  .fp-final h3 { margin:0 0 8px; font-size:13px; color:var(--fp-ink); letter-spacing:0.04em; }
+  .fp-final .fp-req { display:flex; gap:8px; font-size:12.5px; padding:3px 0; color:var(--text); }
+  .fp-final .fp-req .ok  { color:#1a9e5c; font-weight:800; width:18px; }
+  .fp-final .fp-req .no  { color:#d93025; font-weight:800; width:18px; }
+  .fp-final .fp-req .why { color:#8a2020; font-size:11.5px; }
+  .fp-signoff { width:100%; margin-top:10px; background:linear-gradient(180deg,#20c070 0%,#15a055 100%) !important;
+                border:none !important; color:#fff !important; font-weight:800; }
+  .fp-signoff:disabled { background:#d9dde5 !important; color:#7b8494 !important; cursor:not-allowed; }
+  /* v1.32 (12/11/2026): Rear Assy page + Rear Assy on the build card */
+  #screen-rearassy .card-badge { background:#5d4037; }
+  .ra-box { background:#fff; border:1px solid var(--border); border-radius:10px; padding:12px 13px; margin-bottom:14px; }
+  .ra-box.ra-editing { border-color:#e08f1a; box-shadow:0 0 0 2px rgba(224,143,26,0.18); }
+  .ra-box.ra-admin { border-color:#c62828; box-shadow:0 0 0 2px rgba(198,40,40,0.18); }
+  .ra-box h3 { margin:0 0 4px; font-size:13px; letter-spacing:0.05em; color:#5d4037; }
+  .ra-box.ra-admin h3 { color:#c62828; }
+  .ra-who { font-size:12px; color:var(--text-dim); margin-bottom:10px; }
+  .ra-field { margin-bottom:12px; }
+  .ra-field label { display:block; font-size:10px; font-weight:700; letter-spacing:0.07em; text-transform:uppercase; color:var(--yellow); margin-bottom:4px; }
+  .ra-field .serial-row input { font-family:var(--font-mono); font-size:18px; font-weight:700; padding:8px 4px;
+            border:none; border-bottom:2px solid var(--border); background:transparent; width:100%; }
+  .ra-field .serial-row input:focus { outline:none; border-bottom-color:var(--accent); }
+  .ra-prefix { font-family:var(--font-mono,monospace); font-weight:800; font-size:18px; color:var(--accent); white-space:nowrap; }
+  .ra-list-head { display:flex; align-items:center; gap:8px; margin:6px 0 8px; font-size:12px; font-weight:800; letter-spacing:0.06em; color:var(--label); }
+  .ra-list-head .ra-count { background:#5d4037; color:#fff; border-radius:10px; padding:1px 8px; font-size:11px; }
+  .ra-row { background:#fff; border:1px solid var(--border); border-left:4px solid #8d6e63; border-radius:8px; padding:9px 11px; margin-bottom:8px; }
+  .ra-row.on-gun { border-left-color:#1a9e5c; background:#f7fbf8; }
+  .ra-nums { display:flex; flex-wrap:wrap; gap:4px 16px; font-family:var(--font-mono); font-size:14px; }
+  .ra-meta { font-size:11.5px; color:var(--text-dim); margin-top:3px; }
+  .ra-acts { display:flex; gap:8px; margin-top:7px; }
+  .ra-btn { border:1px solid #c9b8b0; background:#f6efec; color:#5d4037; border-radius:7px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; }
+  .ra-btn.admin { border-color:#e6b4b4; background:#fdf0f0; color:#b71c1c; }
+  .ra-pick select { width:100%; font-size:13px; padding:7px 6px; border:1px solid #c9b8b0; border-radius:7px; background:#f6efec; color:#3e2723; font-weight:600; margin-bottom:6px; }
+  .ra-info { font-size:11.5px; color:#5d4037; margin-top:5px; line-height:1.5; }
+  .ra-link { background:none; border:none; color:var(--accent); font-weight:700; font-size:11.5px; cursor:pointer; padding:0 2px; text-decoration:underline; }
+  .ra-tag { align-items:center; white-space:nowrap; background:#5d4037; color:#fff; font-size:11px; font-weight:800;
+            border-radius:6px; padding:5px 8px; font-family:var(--font-mono,monospace); }
+  input.ra-locked { color:#3e2723 !important; background:#f6efec !important; }
 </style>
 
 <!-- ══ IDENTITY ══════════════════════════════════════════════════════════════ -->
@@ -296,9 +374,10 @@
     <div class="section-head"><span class="section-num">03</span><h2 id="checks-heading">Inspection Points</h2></div>
     <div id="checks-list"></div>
   </div>
+  <!-- v1.31 (11/11/2026): Sign Off moved to the PDI page — the final check,
+       only possible when identity, checks, FAT and PDI are all complete. -->
   <div class="action-bar" style="display:flex;gap:8px;">
     <button class="btn btn-secondary" style="flex:1;margin:0;" onclick="saveChecks()">Save Progress</button>
-    <button class="btn btn-primary" style="flex:1;margin:0;" onclick="showSection('signoff')">🖊 Sign Off</button>
   </div>
 </section>
 
@@ -388,6 +467,12 @@
   <button class="nav-tab" data-screen="screen-identity" onclick="showSection('identity')">
     <span class="nav-icon">📋</span><span class="nav-label">Identity</span>
   </button>
+  <!-- v1.32 (12/11/2026): Rear Assy — HRC + firing mech built as their own
+       sub-assembly (RLL and XRGL40; hidden for GRN40). Placed between
+       Identity and Checks — its place in the process (Gerhard 12/11). -->
+  <button class="nav-tab" id="nav-rearassy" data-screen="screen-rearassy" onclick="openRearAssy()">
+    <span class="nav-icon">🔩</span><span class="nav-label">Rear Assy</span>
+  </button>
   <button class="nav-tab" data-screen="screen-checks" onclick="showSection('checks')">
     <span class="nav-icon">✅</span>
     <span class="nav-badge" id="nav-badge-checks" style="display:none"></span>
@@ -410,14 +495,15 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/supabase.js?v=1.30"></script>
-<script src="js/sitegate.js?v=1.30"></script>
-<script src="js/logo.js?v=1.30"></script>
-<script src="js/cardconfig.js?v=1.30"></script>
-<script src="js/fatpdi_config.js?v=1.30"></script>
-<script src="js/app.js?v=1.30"></script>
-<script src="js/fatpdi.js?v=1.30"></script>
-<script src="js/camera_enhanced.js?v=1.30"></script>
+<script src="js/supabase.js?v=1.32"></script>
+<script src="js/sitegate.js?v=1.32"></script>
+<script src="js/logo.js?v=1.32"></script>
+<script src="js/cardconfig.js?v=1.32"></script>
+<script src="js/fatpdi_config.js?v=1.32"></script>
+<script src="js/app.js?v=1.32"></script>
+<script src="js/fatpdi.js?v=1.32"></script>
+<script src="js/camera_enhanced.js?v=1.32"></script>
+<script src="js/rearassy.js?v=1.32"></script>
 
 <script>
 // Set logos immediately after logo.js loads
