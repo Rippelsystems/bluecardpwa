@@ -5,7 +5,9 @@ const state = {
   checks: {},
   formData: {},
   serialVerified: false,
-  buildId: null
+  buildId: null,
+  _dirtyChecks: {},   // v1.35: checks changed on THIS tablet and not yet merged into the card
+  _idBase: null       // v1.35: identity values as last read from / saved to the card
 };
 
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
@@ -50,15 +52,14 @@ function showSection(id) {
                        status: 'IN PROGRESS', session_start: state.formData.session_start || new Date().toISOString() };
   }
   if (id==='identity') refreshIdentity();
-  if (id==='checks')   refreshChecks();
+  if (id==='checks')   { refreshChecks(); _pullChecks(); }   // v1.35: show everybody's ticks
   if (id==='signoff')  refreshSignoff();
   const map = { identity:'screen-identity', checks:'screen-checks', signoff:'screen-signoff' };
   if (!map[id]) return;
   // Auto-save checks whenever leaving checks tab
   if (document.getElementById('screen-checks') && document.getElementById('screen-checks').classList.contains('active')) {
-    if (state.buildId) {
-      supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId).then(()=>{});
-    }
+    // v1.35: only what this tablet changed is sent — never the whole card
+    if (state.buildId) _flushChecks();
   }
   // Block move to signoff if required check values are missing
   if (id === 'signoff') {
@@ -306,6 +307,7 @@ async function loadBuild(id) {
   // A saved row's identifying serial was already validated when it was
   // first confirmed — GRN40 = sight_serial, RLL/XRGL40 = launcher_serial.
   state.checks=row.checks||{}; state.serialVerified=!!_rowIdentifierSerial(row);
+  state._dirtyChecks={}; state._idBase={...state.formData};   // v1.35
   updateCardBadges();
   buildIdentityGrid();
   _injectAutoSaveIndicator();
@@ -320,6 +322,7 @@ function startNewCard() {
   if (typeof resetCardRearAssy === 'function') resetCardRearAssy();   // v1.32
   state.formData={operator_number:state.operator,card_type:state.cardType,status:'IN PROGRESS',session_start:new Date().toISOString()};
   state.checks={}; state.serialVerified=false;
+  state._dirtyChecks={}; state._idBase=null;   // v1.35
   updateCardBadges();
   buildIdentityGrid();
   _injectAutoSaveIndicator();
@@ -329,6 +332,7 @@ function startNewCard() {
 
 function goToResume() {
   state.buildId=null; state.formData={}; state.checks={}; state.serialVerified=false; state._storedComponents={}; state._dupComponents={};
+  state._dirtyChecks={}; state._idBase=null;   // v1.35
   if (typeof resetCardRearAssy === 'function') resetCardRearAssy();   // v1.32
   show('screen-resume'); loadResumeScreen();
 }
@@ -399,13 +403,13 @@ async function cancelBuildCard() {
 }
 
 function endSession() {
-  state.operator=null; state.buildId=null; state.formData={}; state.checks={};
+  state.operator=null; state.buildId=null; state.formData={}; state.checks={}; state._dirtyChecks={}; state._idBase=null;
   show('screen-login');
 }
 
 function changeCardType() {
   // Go back to login screen to pick a different card type or operator
-  state.operator=null; state.buildId=null; state.formData={}; state.checks={};
+  state.operator=null; state.buildId=null; state.formData={}; state.checks={}; state._dirtyChecks={}; state._idBase=null;
   state.serialVerified=false;
   show('screen-login');
 }
@@ -1152,11 +1156,19 @@ async function saveIdentity() {
   delete state.formData.checks;
   let result, error;
   if (state.buildId) {
-    ({data: result, error} = await supabaseClient.from('weapon_builds')
-      .update({...state.formData, updated_at: new Date().toISOString()})
-      .eq('id', state.buildId).select());
+    // v1.35: only the fields changed on this tablet — never another person's
+    // newer values, and never status / sign-off
+    const changes = _identityChanges();
+    if (Object.keys(changes).length) {
+      ({data: result, error} = await supabaseClient.from('weapon_builds')
+        .update({...changes, updated_at: new Date().toISOString()})
+        .eq('id', state.buildId).select());
+      if (!error) _identitySaved(changes);
+    }
   } else {
-    ({data: result, error} = await _createBuildRow({...state.formData}));
+    const sent = {...state.formData};
+    ({data: result, error} = await _createBuildRow(sent));
+    if (!error && state.buildId) _identitySaved(sent);
   }
 
   if (error) {
@@ -1174,7 +1186,8 @@ async function saveIdentity() {
     if (state.formData.trolley_position) serialUpdate.trolley_position = state.formData.trolley_position;
     const { error: serErr } = await supabaseClient.from('weapon_serials')
       .update(serialUpdate)
-      .eq('serial_number', regSerial);
+      .eq('serial_number', regSerial)
+      .or('status.is.null,status.neq.COMPLETE');   // v1.35: never undo a sign-off
     if (serErr) console.warn('Serial status update failed:', serErr);
   }
 
@@ -1266,8 +1279,9 @@ async function _createBuildRow(payload) {
         // Ticks made while the row was still being created have nowhere to
         // go until now — write them to the new row.
         if (!('checks' in payload) && Object.keys(state.checks || {}).length) {
-          await supabaseClient.from('weapon_builds')
+          const { error: ce } = await supabaseClient.from('weapon_builds')
             .update({ checks: state.checks }).eq('id', state.buildId);
+          if (!ce) state._dirtyChecks = {};   // v1.35: all on the new card
         }
       }
     }
@@ -1863,10 +1877,13 @@ function setCheck(id,result) {
   const stamp=document.getElementById(`assy-${id}`);
   if(stamp) stamp.textContent=`OP ${(state.checks[id]&&state.checks[id].assy_no)||state.operator}`;
   if (clearing) showToast('Check cleared — tap PASS / FAIL / N/A to mark it again', 'warn');
-  // Auto-persist to DB on every check tap — so half-filled cards survive
+  // Auto-persist to DB on every check tap — so half-filled cards survive.
+  // v1.35: only this check (and any other this tablet changed) is sent; the
+  // database merges it into the card, so ticks made on another tablet stay.
+  _markCheckDirty(id);
   if (state.buildId) {
-    supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId).then(({error})=>{
-      if(error) showToast('Auto-save failed','warn');
+    _flushChecks().then(r => {
+      if (r && r.error && !r.error.locked) showToast('Auto-save failed','warn');
     });
     // Keep weapon_serials in sync so serial register shows correct progress
     const regSerial = _unitIdentifierSerial();
@@ -1881,6 +1898,7 @@ function setCheck(id,result) {
         .update({status:'IN PROGRESS', checks_done:done, checks_total:total, pct_complete:pct,
                  open_fails: openFails().length})
         .eq('serial_number', regSerial)
+        .or('status.is.null,status.neq.COMPLETE')   // v1.35: never undo a sign-off
         .then(()=>{});
     }
   }
@@ -1900,7 +1918,7 @@ function setCheck(id,result) {
   });
 }
 
-function setCheckValue(id,value) { if(!state.checks[id]) state.checks[id]={}; state.checks[id].value=value; }
+function setCheckValue(id,value) { if(!state.checks[id]) state.checks[id]={}; state.checks[id].value=value; _markCheckDirty(id); }
 
 function editAssyNo(id) {
   const current=state.checks[id]?.assy_no||state.operator;
@@ -1909,6 +1927,7 @@ function editAssyNo(id) {
   const prev = state.checks[id]?.assy_no || state.operator;
   if(!state.checks[id]) state.checks[id]={};
   state.checks[id].assy_no=newNo.trim();
+  _markCheckDirty(id); if (state.buildId) _flushChecks();   // v1.35
   const stamp=document.getElementById(`assy-${id}`); if(stamp) stamp.textContent=`OP ${newNo.trim()}`;
   showToast(`Assy No → ${newNo.trim()}`,'ok');
   // Log the operator reassignment
@@ -1981,8 +2000,9 @@ async function saveChecks() {
   }
 
   if (state.buildId) {
-    // Existing build — just update checks
-    const {error} = await supabaseClient.from('weapon_builds').update({checks:state.checks}).eq('id',state.buildId);
+    // Existing build — v1.35: send what this tablet changed, read back the card
+    const {error} = await _flushChecks(true);
+    if (error && error.locked) return;
     if (error) { showToast('Save failed — ' + (error.message||'check connection'), 'error'); return; }
     await logActivity('CHECKS_SAVE',null,state.checks);
     showToast(`Saved — ${done}/${total} marked`,'ok');
@@ -2007,6 +2027,129 @@ async function saveChecks() {
     showToast('⚠ Save identity (Step 1) before saving checks', 'warn');
   }
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// v1.35 (12/11/2026) — SEVERAL PEOPLE ON ONE CARD, NOBODY OVERWRITES ANYBODY
+// Floor feedback: more than one person works on a gun. Before, every tap
+// saved this tablet's WHOLE copy of the checks, so a second tablet with the
+// same card open wiped every tick made since it opened the card (and leaving
+// the Checks tab re-saved the old copy). Now:
+//   • only the checks changed on this tablet are sent; the database merges
+//     them into the card in one step (bluecard_merge_checks) and answers with
+//     the card's full current checks — everybody's ticks — which the screen
+//     then shows;
+//   • a card signed off on another tablet is never changed from here;
+//   • if the database function is not there yet, the old save is used.
+// ════════════════════════════════════════════════════════════════════════
+let _chkChain = Promise.resolve();
+let _mergeFnMissing = false;
+
+function _markCheckDirty(id) {
+  if (!state._dirtyChecks) state._dirtyChecks = {};
+  state._dirtyChecks[id] = true;
+}
+function _isMissingFn(error) {
+  const m = String((error && (error.message || error.details)) || '');
+  return !!error && (error.code === 'PGRST202' || error.code === '42883' ||
+                     /could not find the function|function .* does not exist/i.test(m));
+}
+// one save at a time, in the order they were made
+function _flushChecks(pull) {
+  const run = _chkChain.then(() => _flushChecksNow(!!pull));
+  _chkChain = run.catch(() => {});
+  return run;
+}
+function _pullChecks() { return state.buildId ? _flushChecks(true) : Promise.resolve({ error: null }); }
+
+async function _flushChecksNow(pull) {
+  const buildId = state.buildId;
+  if (!buildId) return { error: null };
+  const ids = Object.keys(state._dirtyChecks || {});
+  if (!ids.length && !pull) return { error: null };
+  const patch = {};
+  ids.forEach(id => { patch[id] = state.checks[id] ? JSON.parse(JSON.stringify(state.checks[id])) : null; });
+
+  if (_mergeFnMissing) return _flushChecksOld(buildId, ids, patch);
+  let res;
+  try {
+    res = await supabaseClient.rpc('bluecard_merge_checks', { p_build_id: buildId, p_patch: patch });
+  } catch (e) { return { error: e }; }
+  const { data, error } = res || {};
+  if (error) {
+    if (_isMissingFn(error)) { _mergeFnMissing = true; return _flushChecksOld(buildId, ids, patch); }
+    return { error };
+  }
+  if (state.buildId !== buildId) return { error: null };          // already on another card
+  _clearSent(ids, patch);
+  if (data && data.ok === false && data.status === 'COMPLETE') {
+    state._dirtyChecks = {};
+    _applyServerChecks(data.checks || {});
+    showToast('🔒 This card was already signed off on another tablet — nothing changed', 'error');
+    return { error: { message: 'card already signed off', locked: true } };
+  }
+  if (data && data.ok === false) return { error: { message: data.msg || 'not saved' } };
+  if (data && data.checks) _applyServerChecks(data.checks);
+  return { error: null, data };
+}
+// what was sent is saved — unless it was changed again while saving
+function _clearSent(ids, patch) {
+  ids.forEach(id => {
+    if (JSON.stringify(state.checks[id] || null) === JSON.stringify(patch[id])) delete state._dirtyChecks[id];
+  });
+}
+// database function not loaded yet → the old whole-card save (as before v1.35)
+async function _flushChecksOld(buildId, ids, patch) {
+  if (!ids.length) return { error: null };
+  const r = await supabaseClient.from('weapon_builds').update({ checks: state.checks }).eq('id', buildId);
+  if (!r.error && state.buildId === buildId) _clearSent(ids, patch);
+  return r;
+}
+// the card's checks from the database + what this tablet has not saved yet
+function _applyServerChecks(server) {
+  const merged = { ...(server || {}) };
+  Object.keys(state._dirtyChecks || {}).forEach(id => {
+    if (state.checks[id]) merged[id] = state.checks[id]; else delete merged[id];
+  });
+  const before = JSON.stringify(state.checks);
+  state.checks = merged;
+  if (JSON.stringify(merged) !== before) _redrawChecksInPlace();
+}
+// update the rows on screen without rebuilding them (a value being typed stays)
+function _redrawChecksInPlace() {
+  const cfg = getCardConfig();
+  (cfg.checks || cfg.stages || []).forEach(c => {
+    if (!document.getElementById(`chk-row-${c.id}`)) return;
+    applyCheckVisual(c.id);
+    const d = state.checks[c.id] || {};
+    const stamp = document.getElementById(`assy-${c.id}`);
+    if (stamp) stamp.textContent = `OP ${d.assy_no || state.operator || '—'}`;
+    const inp = document.getElementById(`chk-val-${c.id}`);
+    if (inp && document.activeElement !== inp && !(state._dirtyChecks || {})[c.id]) inp.value = d.value || '';
+  });
+  updateChecksProgress(); updateNavBadges();
+}
+
+// ── identity: only the fields changed on this tablet ───────────────────────
+// Before v1.35 every identity save wrote the whole card as this tablet last
+// read it — including status — so a tablet left open on a card could put
+// back old values, or even undo a sign-off done on the PDI page. Now only
+// fields that differ from what this tablet last read / saved are sent, and
+// status / sign-off / who-started fields are never sent from Identity.
+const _ID_NOT_FROM_SCREEN = ['id', 'created_at', 'updated_at', 'checks', 'status', 'qa_operator',
+  'completed_at', 'checks_complete', 'operator_number', 'session_start', 'card_type'];
+function _idVal(v) {
+  if (v === undefined || v === null) return '';
+  return typeof v === 'object' ? JSON.stringify(v) : String(v).trim();
+}
+function _identityChanges() {
+  const base = state._idBase || {}, out = {};
+  Object.keys(state.formData || {}).forEach(k => {
+    if (_ID_NOT_FROM_SCREEN.includes(k)) return;
+    if (_idVal(state.formData[k]) !== _idVal(base[k])) out[k] = state.formData[k];
+  });
+  return out;
+}
+function _identitySaved(sent) { state._idBase = { ...(state._idBase || {}), ...sent }; }
 
 function updateNavBadges() {
   const cfg=getCardConfig();
@@ -2232,12 +2375,19 @@ async function autoSaveIdentity() {
     }
     let result, error;
     if (state.buildId) {
-      ({data: result, error} = await supabaseClient
-        .from('weapon_builds')
-        .update({...state.formData, updated_at: new Date().toISOString()})
-        .eq('id', state.buildId).select());
+      // v1.35: only the fields changed on this tablet (see _identityChanges)
+      const changes = _identityChanges();
+      if (Object.keys(changes).length) {
+        ({data: result, error} = await supabaseClient
+          .from('weapon_builds')
+          .update({...changes, updated_at: new Date().toISOString()})
+          .eq('id', state.buildId).select());
+        if (!error) _identitySaved(changes);
+      }
     } else {
-      ({data: result, error} = await _createBuildRow({...state.formData}));
+      const sent = {...state.formData};
+      ({data: result, error} = await _createBuildRow(sent));
+      if (!error && state.buildId) _identitySaved(sent);
     }
 
     if (error) throw error;
@@ -2250,7 +2400,8 @@ async function autoSaveIdentity() {
       if (state.formData.trolley_position) serialUpdate.trolley_position = state.formData.trolley_position;
       await supabaseClient.from('weapon_serials')
         .update(serialUpdate)
-        .eq('serial_number', regSerial);
+        .eq('serial_number', regSerial)
+        .or('status.is.null,status.neq.COMPLETE');   // v1.35: never undo a sign-off
     }
 
     if (indEl) {
