@@ -263,12 +263,12 @@ function _raCardRender() {
   if (s.mode === 'pick') {
     _raCardLock(true, null);
     pick.style.display = 'block';
-    const opts = (s.list || []).map(r => `<option value="${r.id}">${_raEsc(r.hrc_serial_no)}  ·  FM ${_raEsc(r.firing_mech_no)}  ·  OP ${_raEsc(r.assembler_number)}</option>`).join('');
-    pick.innerHTML = `<select id="sel-rear-assy" onchange="pickCardRearAssy(this.value)">
-        <option value="">${s.loading ? 'Loading rear assemblies…' : (s.list || []).length ? `🔩 Pick a Rear Assy (${s.list.length} waiting)…` : '🔩 No rear assemblies waiting'}</option>
-        ${opts}
-        <option value="__manual">✎ Type the numbers by hand</option>
-      </select>`;
+    // v1.36 (14/11/2026): a search box above the list — type part of the HRC
+    // or firing mech number and the list shows only the ones that match
+    pick.innerHTML = `<input type="text" id="ra-search" class="ra-search" placeholder="🔎 Search HRC / FM no"
+          autocomplete="off" autocapitalize="characters" spellcheck="false"
+          value="${_raEsc(s.filter || '')}" oninput="_raFilterPick(this.value)">
+      <select id="sel-rear-assy" onchange="pickCardRearAssy(this.value)">${_raPickOptions(s)}</select>`;
     return;
   }
   // manual: the boxes work exactly as before
@@ -277,6 +277,36 @@ function _raCardRender() {
     info.style.display = 'block';
     info.innerHTML = `<button type="button" class="ra-link" onclick="changeCardRearAssy()">🔩 Pick from the Rear Assy list instead</button>`;
   }
+}
+
+// v1.36 (14/11/2026): search on the Rear Assy pick list
+// Matches anywhere in the HRC serial, firing mech no or assembler, ignoring
+// spaces, dashes, brackets and upper/lower case ("26232", "lrc 26232", "232(025").
+function _raNorm(v) { return String(v == null ? '' : v).toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+function _raMatches(s) {
+  const q = _raNorm(s.filter);
+  const list = s.list || [];
+  if (!q) return list;
+  return list.filter(r => _raNorm(r.hrc_serial_no).includes(q) || _raNorm(r.firing_mech_no).includes(q)
+                       || _raNorm(r.assembler_number) === q);
+}
+function _raPickOptions(s) {
+  const all = s.list || [], hits = _raMatches(s);
+  const head = s.loading ? 'Loading rear assemblies…'
+    : !all.length ? '🔩 No rear assemblies waiting'
+    : _raNorm(s.filter) ? (hits.length ? `🔩 ${hits.length} of ${all.length} match — pick one…` : `🔩 No match for "${s.filter}" — check the number`)
+    : `🔩 Pick a Rear Assy (${all.length} waiting)…`;
+  return `<option value="">${_raEsc(head)}</option>`
+    + hits.map(r => `<option value="${r.id}">${_raEsc(r.hrc_serial_no)}  ·  FM ${_raEsc(r.firing_mech_no)}  ·  OP ${_raEsc(r.assembler_number)}</option>`).join('')
+    + '<option value="__manual">✎ Type the numbers by hand</option>';
+}
+// typing in the search box: only the list is redrawn, the box keeps its focus
+function _raFilterPick(v) {
+  const s = state.rearAssy;
+  if (!s || s.mode !== 'pick') return;
+  s.filter = v;
+  const sel = document.getElementById('sel-rear-assy');
+  if (sel) sel.innerHTML = _raPickOptions(s);
 }
 
 // called by refreshIdentity (app.js) after the boxes are filled
@@ -302,7 +332,8 @@ async function refreshCardRearAssy() {
 }
 
 async function _raCardLoadPick() {
-  state.rearAssy = { mode: 'pick', list: [], loading: true, buildId: state.buildId || null };
+  const keep = (state.rearAssy && state.rearAssy.mode === 'pick') ? (state.rearAssy.filter || '') : '';
+  state.rearAssy = { mode: 'pick', list: [], loading: true, buildId: state.buildId || null, filter: keep };
   _raCardRender();
   try {
     const { data, error } = await supabaseClient.from('rear_assemblies').select('*')
