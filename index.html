@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
-  <link rel="stylesheet" href="css/style.css?v=1.35">
+  <link rel="stylesheet" href="css/style.css?v=1.36">
   <!-- ── SITE ACCESS GATE (Rippel Matrix BCDS) — see js/sitegate.js ───────── -->
   <style>
     html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
@@ -93,7 +93,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:8px;font-size:13px;font-weight:700;color:#ffffff;letter-spacing:0.08em;text-align:center;font-family:monospace;">
-    v1.35 · 12 Nov 2026
+    v1.36 · 14 Nov 2026
   </div>
 
 </section>
@@ -322,6 +322,11 @@
   .ra-btn { border:1px solid #c9b8b0; background:#f6efec; color:#5d4037; border-radius:7px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; }
   .ra-btn.admin { border-color:#e6b4b4; background:#fdf0f0; color:#b71c1c; }
   .ra-pick select { width:100%; font-size:13px; padding:7px 6px; border:1px solid #c9b8b0; border-radius:7px; background:#f6efec; color:#3e2723; font-weight:600; margin-bottom:6px; }
+  /* v1.36 (14/11/2026): search box above the Rear Assy pick list */
+  .card-cell .ra-pick input.ra-search { width:100%; box-sizing:border-box; font-size:14px; padding:8px 10px;
+            border:2px solid #8d6e63 !important; border-radius:18px !important; background:#ffffff !important;
+            color:#3e2723; font-family:var(--font-mono,monospace); font-weight:700; margin-bottom:6px; }
+  .card-cell .ra-pick input.ra-search::placeholder { color:#a1887f; font-weight:600; font-family:inherit; }
   .ra-info { font-size:11.5px; color:#5d4037; margin-top:5px; line-height:1.5; }
   .ra-link { background:none; border:none; color:var(--accent); font-weight:700; font-size:11.5px; cursor:pointer; padding:0 2px; text-decoration:underline; }
   .ra-tag { align-items:center; white-space:nowrap; background:#5d4037; color:#fff; font-size:11px; font-weight:800;
@@ -516,15 +521,15 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/supabase.js?v=1.35"></script>
-<script src="js/sitegate.js?v=1.35"></script>
-<script src="js/logo.js?v=1.35"></script>
-<script src="js/cardconfig.js?v=1.35"></script>
-<script src="js/fatpdi_config.js?v=1.35"></script>
-<script src="js/app.js?v=1.35"></script>
-<script src="js/fatpdi.js?v=1.35"></script>
-<script src="js/camera_enhanced.js?v=1.35"></script>
-<script src="js/rearassy.js?v=1.35"></script>
+<script src="js/supabase.js?v=1.36"></script>
+<script src="js/sitegate.js?v=1.36"></script>
+<script src="js/logo.js?v=1.36"></script>
+<script src="js/cardconfig.js?v=1.36"></script>
+<script src="js/fatpdi_config.js?v=1.36"></script>
+<script src="js/app.js?v=1.36"></script>
+<script src="js/fatpdi.js?v=1.36"></script>
+<script src="js/camera_enhanced.js?v=1.36"></script>
+<script src="js/rearassy.js?v=1.36"></script>
 
 <script>
 // Set logos immediately after logo.js loads
