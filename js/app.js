@@ -308,6 +308,7 @@ async function loadBuild(id) {
   // first confirmed — GRN40 = sight_serial, RLL/XRGL40 = launcher_serial.
   state.checks=row.checks||{}; state.serialVerified=!!_rowIdentifierSerial(row);
   state._dirtyChecks={}; state._idBase={...state.formData};   // v1.35
+  _trolleyApprovedFor = null;   // v1.37: an Admin approval to move a gun is for that card only
   updateCardBadges();
   buildIdentityGrid();
   _injectAutoSaveIndicator();
@@ -446,7 +447,7 @@ function buildIdentityGrid() {
       </div>
       <div class="card-cell">
         <label>Trolley No</label>
-        <select id="inp-trolley-no" onchange="handleTrolleyChange();scheduleAutoSave()"></select>
+        <select id="inp-trolley-no" onchange="handleTrolleyChange()"></select>
       </div>`;
     return;
   }
@@ -483,11 +484,11 @@ function buildIdentityGrid() {
   grid.innerHTML = `
     <div class="card-cell">
       <label>Trolley No</label>
-      <select id="inp-trolley-no" onchange="handleTrolleyChange();scheduleAutoSave()"></select>
+      <select id="inp-trolley-no" onchange="handleTrolleyChange()"></select>
     </div>
     <div class="card-cell">
       <label>Trolley Position</label>
-      <select id="inp-trolley-pos" onchange="checkTrolleyPositionCollision();scheduleAutoSave()"></select>
+      <select id="inp-trolley-pos" onchange="checkTrolleyPositionCollision()"></select>
     </div>
     <div class="card-cell">
       <label>Year of Manufacturing</label>
@@ -1174,6 +1175,8 @@ async function saveIdentity() {
   if (error) {
     console.error(error);
     const dup = _duplicateComponentError(error);
+    const gate = _trolleyGateError(error);   // v1.37
+    if (gate) { showToast('🚫 Not saved — ' + gate, 'error'); _trolleyRevert(); return; }
     showToast(dup ? '🚫 Not saved — ' + dup : 'Save failed — ' + (error.message||'check connection'), 'error');
     return;
   }
@@ -1481,77 +1484,133 @@ async function autoSuggestTrolley() {
 }
 
 function handleTrolleyChange() {
-  const tp=document.getElementById('inp-trolley-pos'); if(tp) tp.value=1;
-  checkTrolleyPositionCollision();
+  // v1.37 (14/11/2026): a gun that already has a place may only be moved with
+  // the Admin PIN — asked here, before anything else happens
+  if (_hasSavedPlace()) { checkTrolleyPositionCollision(true); return; }
+  // a new card: no position until one is picked (it used to jump to Pos 1,
+  // which is usually already taken)
+  const tp=document.getElementById('inp-trolley-pos'); if(tp) tp.value='';
+  state.formData.trolley_position = null;
+  scheduleAutoSave();
 }
 
-// ─── TROLLEY/POSITION COLLISION GUARD ─────────────────────────────────────────
-// Fires whenever trolley or position changes on a NEW (unsaved) card.
-// If an incomplete card already exists at that exact trolley/position,
-// warn immediately and offer to jump straight to it — this is the direct
-// safeguard against the exact incident where a duplicate card got created
-// because the existing one belonged to a different operator and was
-// invisible on the Resume screen.
-async function checkTrolleyPositionCollision() {
-  // Only relevant when starting a brand-new card — resuming an existing
-  // one already has state.buildId set, so there's nothing to collide with.
-  if (state.buildId) return;
+// ─── TROLLEY / POSITION GATE (v1.37, 14/11/2026) ──────────────────────────────
+// Floor 14/11/2026: guns were nearly mixed up when trolley positions were
+// changed. Gerhard's rules (also enforced in the database — trolley_gate_14Nov.sql):
+//   • a position is TAKEN as soon as a build card sits there (any status);
+//   • another serial cannot go on a taken position without the Admin PIN —
+//     "wrong serial on the wrong place";
+//   • a gun that already has a place cannot be moved (or taken off its place)
+//     without the Admin PIN, even to an empty position.
+// Before v1.37 this was only a warning on a NEW card, and Cancel carried on.
+function _hasSavedPlace() {
+  const b = state._idBase || {};
+  return !!state.buildId && b.trolley_number != null && String(b.trolley_number) !== ''
+                         && b.trolley_position != null && String(b.trolley_position) !== '';
+}
+function _gunSerial() { return _unitIdentifierSerial() || 'this gun'; }
+// put the trolley / position boxes back where the gun is
+function _trolleyRevert() {
+  const b = state._idBase || {};
+  const tn = document.getElementById('inp-trolley-no'), tp = document.getElementById('inp-trolley-pos');
+  if (_hasSavedPlace()) {
+    if (tn) tn.value = String(b.trolley_number);
+    if (tp) tp.value = String(b.trolley_position);
+    state.formData.trolley_number = b.trolley_number;
+    state.formData.trolley_position = b.trolley_position;
+  } else {
+    if (tp) tp.value = '';
+    state.formData.trolley_position = null;
+  }
+}
+// Admin PIN → approval in the database (15 minutes). true = allowed.
+let _trolleyApprovedFor = null;     // { buildId, until } — one PIN covers trolley + position
+async function _trolleyAdminApprove(msg, buildId, t, p) {
+  const pin = prompt(`${msg}\n\nEnter the ADMIN PIN to allow it — or Cancel to leave it as it was:`);
+  if (pin === null || !String(pin).trim()) { showToast('Cancelled — the gun stays where it was', 'warn'); return false; }
+  try {
+    const { data, error } = await supabaseClient.rpc('trolley_override_approve', {
+      p_build_id: buildId || null, p_card_type: state.cardType,
+      p_trolley: buildId ? null : parseInt(t, 10), p_pos: buildId ? null : parseInt(p, 10),
+      p_operator: state.operator, p_admin_pin: String(pin).trim(), p_reason: 'tablet: ' + msg.split('\n')[0]
+    });
+    if (error) {
+      if (typeof _isMissingFn === 'function' && _isMissingFn(error)) return true;   // gate SQL not loaded yet
+      throw error;
+    }
+    if (!data || !data.ok) { showToast('🚫 ' + ((data && data.msg) || 'Not allowed'), 'error'); return false; }
+    if (buildId) _trolleyApprovedFor = { buildId, until: Date.now() + 14 * 60000 };
+    showToast('🔓 Admin approved — trolley / position change allowed', 'ok');
+    return true;
+  } catch (e) {
+    showToast('⚠ Could not check the Admin PIN — ' + ((e && e.message) || e), 'error');
+    return false;
+  }
+}
+// readable text for a database refusal ("TROLLEY_GATE: …")
+function _trolleyGateError(err) {
+  const m = String((err && (err.message || err.details)) || '');
+  const i = m.indexOf('TROLLEY_GATE:');
+  return i >= 0 ? m.slice(i + 13).trim() : null;
+}
 
+// Fires when trolley or position is changed. moving = trolley box changed on
+// a gun that already has a place.
+async function checkTrolleyPositionCollision(moving) {
+  if (typeof _autoSaveTimer !== 'undefined' && _autoSaveTimer) clearTimeout(_autoSaveTimer);   // nothing saved until decided
   const t = document.getElementById('inp-trolley-no')?.value;
   const p = document.getElementById('inp-trolley-pos')?.value;
+
+  // ── A gun that already has a place: moving it needs the Admin PIN ──
+  if (_hasSavedPlace()) {
+    const b = state._idBase;
+    if (!moving && String(b.trolley_number) === String(t) && String(b.trolley_position) === String(p)) return;
+    const ok = (_trolleyApprovedFor && _trolleyApprovedFor.buildId === state.buildId && Date.now() < _trolleyApprovedFor.until)
+      || await _trolleyAdminApprove(
+           `🚫 ${_gunSerial()} is on Trolley ${b.trolley_number} / Pos ${b.trolley_position}.\n` +
+           `Moving a gun to another trolley or position needs the Admin PIN.`, state.buildId, t, p);
+    if (!ok) { _trolleyRevert(); return; }
+    if (moving) {                                   // trolley changed → pick the new position
+      const tp = document.getElementById('inp-trolley-pos'); if (tp) tp.value = '';
+      state.formData.trolley_position = null;
+      return;
+    }
+    // fall through: also tell them if the new place already holds another gun
+  }
   if (!t || !p) return;
 
   try {
-    // Scope to this card type too — RLL/XRGL40/GRN40 trolleys are separate
-    // lines and a trolley/position pair can legitimately repeat across them.
-    const base = supabaseClient.from('weapon_builds')
+    // any card on this place, any status — another serial = wrong place
+    const { data } = await supabaseClient.from('weapon_builds')
       .select('id,launcher_serial,sight_serial,operator_number,status')
-      .eq('trolley_number', parseInt(t))
-      .eq('trolley_position', parseInt(p))
-      .eq('card_type', state.cardType);
-
-    // 1) An INCOMPLETE card here — same as before: offer to jump to it.
-    const {data: inProgress} = await base.neq('status','COMPLETE').limit(1);
-    if (inProgress && inProgress.length > 0) {
-      const existing = inProgress[0];
-      const serial = existing.launcher_serial || existing.sight_serial;
-      const proceed = confirm(
-        `⚠ A card already exists at Trolley ${t} / Pos ${p}:\n\n` +
-        `  Serial: ${serial || '(not yet entered)'}\n` +
-        `  Started by: OP ${existing.operator_number}\n` +
-        `  Status: ${existing.status}\n\n` +
-        `Tap OK to open that existing card instead, or Cancel to keep ` +
-        `filling in a new one (only do this if you're sure this is a ` +
-        `genuinely different build).`
-      );
-      if (proceed) { loadBuild(existing.id); }
+      .eq('trolley_number', parseInt(t)).eq('trolley_position', parseInt(p))
+      .eq('card_type', state.cardType).limit(5);
+    const mine = String(_unitIdentifierSerial() || '').toUpperCase();
+    const other = (data || []).find(r => r.id !== state.buildId &&
+      String((state.cardType === 'GRN40' ? r.sight_serial : r.launcher_serial) || '').toUpperCase() !== mine);
+    if (!other) {
+      if (_hasSavedPlace() || state.buildId) scheduleAutoSave(400);
       return;
     }
-
-    // 2) A COMPLETED card already here — the gap that let a GRN40 sample
-    // get signed off twice for the same trolley/position. It's finished,
-    // so there's nothing to jump to — just a hard warning before letting
-    // the operator create what would be a duplicate.
-    const {data: completed} = await base.eq('status','COMPLETE').limit(1);
-    if (completed && completed.length > 0) {
-      const existing = completed[0];
-      const serial = existing.launcher_serial || existing.sight_serial;
-      const proceed = confirm(
-        `🚫 Trolley ${t} / Pos ${p} already has a COMPLETED ${state.cardType} card:\n\n` +
-        `  Serial: ${serial || '(none recorded)'}\n` +
-        `  Signed off by: OP ${existing.operator_number}\n\n` +
-        `Starting a new card here will create a DUPLICATE build for this ` +
-        `position. Only continue if this trolley/position is genuinely ` +
-        `being reused for a new, different unit.`
-      );
-      if (!proceed) {
-        // Clear the position so they don't accidentally submit into it
-        const posEl = document.getElementById('inp-trolley-pos');
-        if (posEl) posEl.value = '';
-      }
+    const oSerial = (state.cardType === 'GRN40' ? other.sight_serial : other.launcher_serial) || '(serial not entered)';
+    const oStatus = String(other.status || 'IN PROGRESS').toUpperCase();
+    // a NEW card on an unfinished card's place: offer that card first (as before)
+    if (!state.buildId && oStatus !== 'COMPLETE' &&
+        confirm(`⚠ Trolley ${t} / Pos ${p} already has a card:\n\n  Serial: ${oSerial}\n  Started by: OP ${other.operator_number}\n` +
+                `  Status: ${oStatus}\n\nTap OK to open THAT card.\nCancel = this is a different gun (needs the Admin PIN).`)) {
+      loadBuild(other.id); return;
     }
+    // already approved for this gun (moving) → that covers it
+    if (state.buildId && _trolleyApprovedFor && _trolleyApprovedFor.buildId === state.buildId && Date.now() < _trolleyApprovedFor.until) {
+      scheduleAutoSave(400); return;
+    }
+    const ok = await _trolleyAdminApprove(
+      `🚫 WRONG PLACE — Trolley ${t} / Pos ${p} already has ${oSerial} (${oStatus}).\n` +
+      `${_gunSerial()} is the wrong serial for this place.`, null, t, p);
+    if (!ok) { _trolleyRevert(); return; }
+    if (state.buildId) scheduleAutoSave(400);
   } catch(e) {
-    console.warn('[TrolleyCollision] Check failed:', e);
+    console.warn('[TrolleyGate] Check failed:', e);
   }
 }
 
@@ -2424,6 +2483,13 @@ async function autoSaveIdentity() {
 
   } catch(e) {
     console.error('[AutoSave]', e);
+    const gate = _trolleyGateError(e);   // v1.37: wrong trolley place refused by the database
+    if (gate) {
+      showToast('🚫 Not saved — ' + gate, 'error');
+      _trolleyRevert();
+      if (indEl) { indEl.textContent = '🚫 Not saved — trolley / position needs the Admin PIN'; indEl.style.color = 'var(--fail, #e03c3c)'; }
+      return;
+    }
     const dup = _duplicateComponentError(e);
     if (dup) showToast('🚫 Not saved — ' + dup, 'error');
     if (indEl) {
