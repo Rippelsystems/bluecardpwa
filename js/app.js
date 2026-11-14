@@ -1814,8 +1814,14 @@ function buildCheckRows(container, checks) {
              value="${saved.value||''}" onchange="setCheckValue('${chk.id}',this.value)"
              style="width:100%;border:none;border-bottom:1px solid var(--border);
                     background:transparent;font-size:12px;padding:3px 2px;margin-top:6px;outline:none;color:var(--text);">`:'' ;
-    const btnLabel1=chk.type==='go_nogo'?'GO':'PASS';
-    const btnLabel2=chk.type==='go_nogo'?'NO-GO':'FAIL';
+    // v1.38 (14/11/2026, QMS): PASS / FAIL belong to FAT and PDI — on the
+    // build Checks the buttons READ "COMPLETED" / "NOT COMPLETED". Only the
+    // words change: the card still stores PASS / FAIL (val1 / val2), so every
+    // card, report, rule and the FAT / PDI pages work exactly as before.
+    const btnLabel1=chk.type==='go_nogo'?'GO':'COMPLETED';
+    const btnLabel2=chk.type==='go_nogo'?'NO-GO':'NOT COMPLETED';
+    const val1=chk.type==='go_nogo'?'GO':'PASS';
+    const val2=chk.type==='go_nogo'?'NO-GO':'FAIL';
     row.innerHTML=`
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px;">
         <span class="check-label" style="margin:0;">${chk.label}</span>
@@ -1829,9 +1835,9 @@ function buildCheckRows(container, checks) {
       ${measField}
       ${saved.rework_note?`<div style="font-size:11px;color:#1a9e5c;margin-top:6px;">🔧 Reworked by OP ${saved.rework_by||'?'}: ${String(saved.rework_note).replace(/</g,'&lt;')}</div>`:''}
       <div class="check-btns" style="margin-top:8px;">
-        <button class="chk-btn pass" onclick="setCheck('${chk.id}','${btnLabel1}')">${btnLabel1}</button>
-        <button class="chk-btn fail" onclick="setCheck('${chk.id}','${btnLabel2}')">${btnLabel2}</button>
-        <button class="chk-btn na"   onclick="setCheck('${chk.id}','N/A')">N/A</button>
+        <button class="chk-btn pass" onclick="setCheck('${chk.id}','${val1}')">${btnLabel1}</button>
+        <button class="chk-btn fail" onclick="setCheck('${chk.id}','${val2}')">${btnLabel2}</button>
+        <!-- v1.38 (14/11/2026): N/A button removed — never used on any card (LIVE 14 Nov: 0 of 6,088 checks) -->
       </div>`;
     container.appendChild(row);
     if(saved.result) applyCheckVisual(chk.id);
@@ -1881,6 +1887,8 @@ function buildGRN40Stages(container, stages) {
 const _FAIL_RESULTS = ['FAIL', 'NO-GO'];
 const _PASS_RESULTS = ['PASS', 'GO'];
 function _isFail(r) { return _FAIL_RESULTS.includes(r); }
+// v1.38: what the operator sees for a stored result on the Checks page
+function _chkWord(r) { return r === 'PASS' ? 'COMPLETED' : r === 'FAIL' ? 'NOT COMPLETED' : r; }
 function _isPass(r) { return _PASS_RESULTS.includes(r); }
 function openFails() {
   const cfg = getCardConfig();
@@ -1897,15 +1905,15 @@ function setCheck(id,result) {
 
   // ── Strict FAIL rules ──
   if (_isFail(prevResult)) {
-    if (result === prevResult) { showToast('A FAIL cannot be cleared — fix it, then tap PASS and record what was done', 'error'); return; }
+    if (result === prevResult) { showToast(`${_chkWord(prevResult)} cannot be cleared — fix it, then tap ${prevResult === 'NO-GO' ? 'GO' : 'COMPLETED'} and record what was done`, 'error'); return; }
     if (result === 'N/A')      { showToast('N/A is not allowed on a failed check — it must be fixed and re-marked PASS', 'error'); return; }
     if (_isPass(result)) {
       const noteRaw = prompt(
-        `REWORK — ${labelNow}\n\nThis check was marked ${prevResult}.\n` +
+        `REWORK — ${labelNow}\n\nThis check was marked ${_chkWord(prevResult)}.\n` +
         `Describe what was found and what was done to fix it (required):`);
       if (noteRaw === null) return;
       const note = noteRaw.trim();
-      if (!note) { showToast('A rework description is required before a FAIL can be passed', 'error'); return; }
+      if (!note) { showToast(`A rework description is required before it can be marked ${_chkWord(result)}`, 'error'); return; }
       state.checks[id].rework_note = note;
       state.checks[id].rework_by   = state.operator;
       state.checks[id].rework_at   = new Date().toISOString();
@@ -1935,7 +1943,7 @@ function setCheck(id,result) {
   applyCheckVisual(id); updateChecksProgress(); updateNavBadges();
   const stamp=document.getElementById(`assy-${id}`);
   if(stamp) stamp.textContent=`OP ${(state.checks[id]&&state.checks[id].assy_no)||state.operator}`;
-  if (clearing) showToast('Check cleared — tap PASS / FAIL / N/A to mark it again', 'warn');
+  if (clearing) showToast('Check cleared — tap it again to mark it', 'warn');
   // Auto-persist to DB on every check tap — so half-filled cards survive.
   // v1.35: only this check (and any other this tablet changed) is sent; the
   // database merges it into the card, so ticks made on another tablet stay.
@@ -2017,7 +2025,10 @@ function applyCheckVisual(id) {
   const isFail=result==='FAIL'||result==='NO-GO';
   row.setAttribute('data-result',isPass?'PASS':isFail?'FAIL':'N/A');
   row.querySelectorAll('.chk-btn').forEach(b=>b.classList.remove('selected'));
-  row.querySelectorAll('.chk-btn').forEach(b=>{if(b.textContent.trim()===result||( result==='PASS'&&b.textContent.trim()==='✓')||(result==='FAIL'&&b.textContent.trim()==='✗')) b.classList.add('selected');});
+  // v1.38: by the button's kind (pass / fail / na), not its text — the text now
+  // reads COMPLETED / NOT COMPLETED while the stored result stays PASS / FAIL
+  const want = isPass ? 'pass' : isFail ? 'fail' : 'na';
+  row.querySelectorAll('.chk-btn').forEach(b=>{ if (b.classList.contains(want)) b.classList.add('selected'); });
 }
 
 function updateChecksProgress() {
@@ -2026,7 +2037,7 @@ function updateChecksProgress() {
   const done=Object.values(state.checks).filter(v=>v&&v.result).length;
   const fails=Object.values(state.checks).filter(v=>v&&(v.result==='FAIL'||v.result==='NO-GO')).length;
   const el=document.getElementById('checks-progress');
-  if(el) el.textContent=`${done}/${total}${fails>0?` · ${fails} FAIL`:''}`;
+  if(el) el.textContent=`${done}/${total}${fails>0?` · ${fails} ✗`:''}`;   // v1.38: short — the top bar is narrow
 }
 
 async function saveChecks() {
