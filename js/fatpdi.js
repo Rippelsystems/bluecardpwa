@@ -37,7 +37,29 @@ const fatpdi = {
   _opening: false,      // v1.35: a unit is being opened (one tap = one open)
   _touchAt: 0           // v1.35: last "still working on it" stamp sent
 };
-const FP_BUSY_MINUTES = 30;   // v1.35: an open gun nobody touched for 30 min no longer shows as in progress
+const FP_BUSY_MINUTES = 30;
+const FP_STRICT_ALL_ITEMS = true;   // v1.39: every FAT / PDI item required (no old-list exception)
+
+// ════════════════════════════════════════════════════════════════════════
+// v1.39 (16/11/2026) — THE FAT / PDI GATE IS BACK (RLL + XRGL40, STRICT)
+// FAT lists a gun only when every assembly check is COMPLETED or GO
+// (database view bc_fat_ready). PDI lists a gun only when, on top of that,
+// every FAT item is PASS (view bc_pdi_ready). A gun that does not qualify is
+// not listed, even if work was already saved on it — it must be fixed first.
+// Admin Preview (PIN) still lists every gun, tagged with why it is held back.
+// GRN40 is not gated (left as it is).
+// ════════════════════════════════════════════════════════════════════════
+function _fpGated() { return fatpdi.cardType === 'RLL' || fatpdi.cardType === 'XRGL40'; }
+function _fpGateSource() {
+  if (fatpdi.adminPreview || !_fpGated()) return 'weapon_builds';
+  return fatpdi.stage === 'PDI' ? 'bc_pdi_ready' : 'bc_fat_ready';
+}
+// assembly checks COMPLETED (PASS) / GO out of the card's total
+function _fpChecksOk(ct, checks) {
+  const defs = ((typeof CARD_TYPES !== 'undefined' && CARD_TYPES[ct]) || {}).checks || [];
+  const ok = defs.filter(c => ['PASS', 'GO'].includes(String(((checks || {})[c.id] || {}).result || '').toUpperCase())).length;
+  return { ok, total: defs.length };
+}   // v1.35: an open gun nobody touched for 30 min no longer shows as in progress
 
 // ════════════════════════════════════════════════════════════════════════
 // v1.32 (12/11/2026) — ITEMS ADDED TO A LIST LATER (added: true in config)
@@ -67,6 +89,11 @@ async function _fpLoadAddedCutoff(ct, stage) {
 // items this unit must have: res = {itemId: result}, at = {itemId: inspected_at}
 function _fpRequiredItems(ct, stage, res, at, cutoff) {
   const items = (((FATPDI_TYPES[ct] || {})[stage] || {}).items) || [];
+  // v1.39 (16/11/2026) STRICT: every item on the list must be PASS — the
+  // old-list exception below is switched off (Gerhard: guns done before
+  // 12 Nov need the Cylinder Alignment tick to go through to PDI). Kept, not
+  // deleted, so it can be switched back on by removing the next line.
+  if (FP_STRICT_ALL_ITEMS) return items;
   if (!items.some(it => it.added)) return items;
   const older = items.filter(it => !it.added);
   const cut = cutoff ? Date.parse(cutoff) : Infinity;
@@ -245,7 +272,7 @@ async function requestAdminPreview() {
     // Toggle off
     fatpdi.adminPreview = false;
     _updateAdminPreviewUI();
-    _loadFatPdiUnits();
+    _loadFatPdiUnits(true);   // v1.39: start the list again (was appending)
     return;
   }
 
@@ -258,7 +285,7 @@ async function requestAdminPreview() {
     console.warn('[FAT/PDI] Could not fetch admin PIN, using fallback');
   }
 
-  const entered = prompt('ADMIN PREVIEW\n\nEnter Admin PIN to review the FAT/PDI checklist, including units held back by an open FAIL:\n(Nothing entered here is saved as a real QC record.)');
+  const entered = prompt('ADMIN PREVIEW\n\nEnter Admin PIN to review the FAT/PDI checklist, including guns held back (checks not all COMPLETED, FAT not all PASS):\n(Nothing entered here is saved as a real QC record.)');
   if (!entered) return;
 
   if (entered.trim() !== adminPin) {
@@ -269,7 +296,7 @@ async function requestAdminPreview() {
   fatpdi.adminPreview = true;
   showToast('🔓 Admin Preview ON — showing all units, nothing will be saved', 'warn');
   _updateAdminPreviewUI();
-  _loadFatPdiUnits();
+  _loadFatPdiUnits(true);     // v1.39: start the list again (was appending)
 }
 
 function _updateAdminPreviewUI() {
@@ -304,7 +331,8 @@ async function _loadFatPdiUnits(reset) {
     // 23/10/2026 (v1.22): no more count='exact' — that made PostgREST run a
     // second counting query over the table on every page; the page itself
     // tells us whether there is more (a full page = probably more).
-    let q = supabaseClient.from('weapon_builds')
+    // v1.39: FAT / PDI read the gate views; Admin Preview + GRN40 read weapon_builds
+    let q = supabaseClient.from(_fpGateSource())
       .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,status,checks')
       .eq('card_type', fatpdi.cardType)
       .not(serialCol, 'is', null);
@@ -332,6 +360,7 @@ async function _loadFatPdiUnits(reset) {
     const skippedFails = (data || []).filter(r => hasFail(r) && !fatpdi.adminPreview).length;
     const pageUnits = (data || []).filter(r => fatpdi.adminPreview || !hasFail(r)).map(r => ({
       openFails: Object.values(r.checks || {}).filter(v => v && ['FAIL','NO-GO'].includes(v.result)).length,
+      chk: _fpChecksOk(fatpdi.cardType, r.checks),     // v1.39: for the Admin Preview "held back" tag
       unitSerial: fatpdi.cardType === 'GRN40' ? r.sight_serial : r.launcher_serial,
       launcherSerial: fatpdi.cardType === 'GRN40' ? null : r.launcher_serial,
       sightSerial: r.sight_serial || null,
@@ -342,7 +371,7 @@ async function _loadFatPdiUnits(reset) {
 
     fatpdi.units = fatpdi.units.concat(pageUnits);
     fatpdi.offset += (data || []).length;
-    if (skippedFails) showToast(`⚠ ${skippedFails} unit(s) held back — build card has an open FAIL`, 'warn');
+    if (skippedFails) showToast(`⚠ ${skippedFails} unit(s) held back — build card has a check NOT COMPLETED / NO-GO`, 'warn');
 
     // Doc control footer — pulled live from Document Revision Control.
     // Not awaited: the grid must never wait for the footer.
@@ -364,7 +393,11 @@ async function _loadFatPdiUnits(reset) {
       emptyMsg.style.display = 'block';
       emptyMsg.textContent = fatpdi.adminPreview
         ? `No ${fatpdi.cardType} Blue Card builds match this filter.`
-        : `No ${fatpdi.cardType} units with a Blue Card build match this filter yet (units with an open FAIL are held back).`;
+        : !_fpGated()
+        ? `No ${fatpdi.cardType} units with a Blue Card build match this filter yet (units with a check NOT COMPLETED are held back).`
+        : fatpdi.stage === 'PDI'
+        ? `No ${fatpdi.cardType} guns ready for PDI match this filter. A gun comes onto PDI when every assembly check is COMPLETED / GO and every FAT item is PASS.`
+        : `No ${fatpdi.cardType} guns ready for FAT match this filter. A gun comes onto FAT when every assembly check on its build card is COMPLETED / GO.`;
       if (countLabel) countLabel.textContent = '';
       if (loadMoreBtn) loadMoreBtn.style.display = 'none';
       return;
@@ -381,6 +414,21 @@ async function _loadFatPdiUnits(reset) {
         20000, 'Loading saved results');
       if (exErr) throw exErr;
       (existing || []).forEach(_fpTakeRow);
+      // v1.39: Admin Preview on PDI — how many FAT items each gun has PASS
+      if (fatpdi.adminPreview && _fpGated() && fatpdi.stage === 'PDI') {
+        try {
+          const { data: fr } = await _withTimeout(
+            supabaseClient.from('weapon_fat_results').select('unit_serial,item_id,result')
+              .eq('card_type', fatpdi.cardType).in('unit_serial', pageSerials),
+            20000, 'Reading FAT results');
+          const pass = {};
+          (fr || []).forEach(r => { if (String(r.result || '').toUpperCase() === 'PASS')
+            (pass[r.unit_serial] = pass[r.unit_serial] || new Set()).add(r.item_id); });
+          const nFat = ((FATPDI_TYPES[fatpdi.cardType] || {}).FAT || {}).items || [];
+          pageUnits.forEach(u => { u.fatPass = nFat.filter(it => (pass[u.unitSerial] || new Set()).has(it.id)).length;
+                                   u.fatTotal = nFat.length; });
+        } catch (e) { console.warn('[FAT/PDI] preview FAT read', e); }
+      }
       await _fpLoadBusy(pageSerials);   // v1.35: who has a gun open right now
       // v1.32: when did the added item(s) come into use (once per opening)
       if (reset && _fpAddedIds(fatpdi.cardType, fatpdi.stage).length) {
@@ -531,7 +579,7 @@ function _renderFatPdiGrid() {
     const savedAcc = _isAcc() ? fatpdi.saved[us] : null;
     const statusTag = (u.status !== 'COMPLETE'
       ? `<br><span style="font-size:9px;color:#e08f1a;">build ${u.status||'IN PROGRESS'}${fatpdi.adminPreview ? ' (preview)' : ''}</span>` : '')
-      + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} FAIL on build card</span>` : '')
+      + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} NOT COMPLETED / NO-GO on build card</span>` : '')
       + (savedAcc ? `<br><span style="font-size:9px;font-weight:700;color:${savedAcc.accepted ? '#1a9e5c' : '#e03c3c'};">${savedAcc.accepted ? '✓ ACCEPTED' : '✗ NOT ACCEPTED'} · OP ${savedAcc.by || '?'} ${(savedAcc.at || '').slice(0,10)}</span>` : '');
     html += `<td style="position:sticky;left:0;background:var(--bg,#0a1628);font-family:var(--font-mono,monospace);font-weight:700;">${us}${u.sightSerial && u.launcherSerial ? `<br><span style="font-size:10px;color:var(--text-dim,#8fa3c0);">Sight ${u.sightSerial}</span>` : ''}${statusTag}</td>`;
     html += `<td style="font-size:12px;">${u.trolleyNumber||'—'} / ${u.trolleyPosition||'—'}</td>`;
@@ -576,6 +624,14 @@ function _fpProgress(us) {
   const fails = _fpItems().filter(it => res[it.id] === 'FAIL').length;
   return { done, total: items.length, fails };
 }
+// v1.39: Admin Preview only — why a gun is not on this tab for the floor
+function _fpHeldTag(u) {
+  if (!fatpdi.adminPreview || !_fpGated() || _isAcc()) return '';
+  const why = [];
+  if (u.chk && u.chk.ok < u.chk.total) why.push(`checks ${u.chk.ok}/${u.chk.total}`);
+  if (fatpdi.stage === 'PDI' && u.fatTotal != null && u.fatPass < u.fatTotal) why.push(`FAT PASS ${u.fatPass}/${u.fatTotal}`);
+  return why.length ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⛔ not on ${fatpdi.stage} yet — ${_fpEsc(why.join(' · '))}</span>` : '';
+}
 function _fpShowList() {
   const lv = document.getElementById('fatpdi-list-view'), uv = document.getElementById('fatpdi-unit-view');
   if (lv) lv.style.display = '';
@@ -594,7 +650,8 @@ function _renderFatPdiList() {
     const us = u.unitSerial, p = _fpProgress(us);
     const tag = (u.status !== 'COMPLETE'
         ? `<br><span style="font-size:9px;color:#e08f1a;">build ${_fpEsc(u.status||'IN PROGRESS')}${fatpdi.adminPreview ? ' (preview)' : ''}</span>` : '')
-      + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} FAIL on build card</span>` : '');
+      + (u.openFails ? `<br><span style="font-size:9px;color:#e03c3c;font-weight:700;">⚠ ${u.openFails} NOT COMPLETED / NO-GO on build card</span>` : '')
+      + _fpHeldTag(u);
     const prog = p.done === 0 ? '<span class="fp-prog" style="color:var(--text-dim,#8fa3c0);">Not started</span>'
       : p.fails ? `<span class="fp-prog" style="color:#d93025;">${p.done}/${p.total} · ${p.fails} FAIL</span>`
       : p.done === p.total ? '<span class="fp-prog" style="color:#1a9e5c;">✓ Completed — all PASS</span>'
