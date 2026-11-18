@@ -1073,10 +1073,16 @@ function _fpBandStatus(us) {
 // results + who-is-busy for these guns, straight from the database.
 // forOpen = reading the gun that is being opened (anything else skips the
 // gun open on screen, so a refresh never touches unsaved marks).
+// v1.40 (18/11/2026): the database hands back at most 1000 rows per read.
+// 100 guns × 11 PDI / 13 FAT items = 1100 / 1300 rows — the rest were cut
+// off, so once more than ~90 guns were loaded a refresh (every minute, Back,
+// Save) wiped the results of the guns past row 1000. 50 guns per read =
+// at most 650 rows.
+const FP_READ_CHUNK = 50;
 async function _fpReadFresh(serials, forOpen) {
   if (_isAcc() || !serials.length) return;
-  for (let i = 0; i < serials.length; i += 100) {
-    const part = serials.slice(i, i + 100);
+  for (let i = 0; i < serials.length; i += FP_READ_CHUNK) {
+    const part = serials.slice(i, i + FP_READ_CHUNK);
     const { data, error } = await _withTimeout(
       supabaseClient.from(_fatpdiTable())
         .select('unit_serial,item_id,result,remarks,inspected_by,inspected_at')
