@@ -313,7 +313,15 @@ function _raFilterPick(v) {
 async function refreshCardRearAssy() {
   if (!rearAssyEnabled() || !document.getElementById('ra-pick')) { state.rearAssy = { mode: 'off' }; _raCardRender(); return; }
   const s = state.rearAssy;
-  if (s && s.buildId === (state.buildId || null) && ['linked', 'pick', 'manual'].includes(s.mode)) {
+  // v1.41 (18/11/2026): a card still on "Pick a Rear Assy…" reads the list
+  // again every time the Identity page is shown — a rear assembly saved on
+  // the Rear Assy page a moment ago was not offered until the operator
+  // logged out and in (the list was kept from when the card was opened).
+  // The search text typed is kept.
+  if (s && s.buildId === (state.buildId || null) && s.mode === 'pick') {
+    await _raCardLoadPick(); return;
+  }
+  if (s && s.buildId === (state.buildId || null) && ['linked', 'manual'].includes(s.mode)) {
     _raCardRender(); return;                         // keep what the operator chose on this card
   }
   const hasHrc = !!String(state.formData.hrc_serial_no || '').trim();
