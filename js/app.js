@@ -215,6 +215,7 @@ async function handleLogin() {
 
 // ─── RESUME ───────────────────────────────────────────────────────────────────
 async function loadResumeScreen() {
+  _resumeForCardType();   // v1.43
   const tSel=document.getElementById('inp-find-trolley');
   const pSel=document.getElementById('inp-find-pos');
   if (tSel) { tSel.innerHTML='<option value="">Trolley…</option>'; for(let i=1;i<=20;i++) tSel.innerHTML+=`<option value="${i}">Trolley ${i}</option>`; }
@@ -264,8 +265,9 @@ async function loadResumeScreen() {
 }
 
 async function findBySerial() {
-  const serial=document.getElementById('inp-find-serial').value.trim().toUpperCase();
-  if (!serial){showToast('Enter a serial number','error');return;}
+  let serial=document.getElementById('inp-find-serial').value.trim().toUpperCase();
+  if (state.cardType==='GRN40') serial = normaliseSerial(serial, 'GRN40');   // v1.43: "6403" finds GRN-6403
+  if (!serial || serial==='GRN-'){showToast('Enter a serial number','error');return;}
   let {data}=await supabaseClient.from('weapon_builds').select('id,card_type').eq('launcher_serial',serial).neq('status','COMPLETE').limit(1);
   // GRN40 cards are identified by sight_serial (no launcher_serial at all)
   if (!data||data.length===0) {
@@ -418,6 +420,43 @@ function changeCardType() {
   show('screen-login');
 }
 
+// v1.43 (20/11/2026): switch card type from the Home screen — same operator,
+// no End Session / log in again. Only from Home, where no card is open.
+function switchCardType(ct) {
+  if (!state.operator) { show('screen-login'); return; }
+  if (!ct || ct === state.cardType || !CARD_TYPES[ct]) return;
+  // a FAT / PDI gun still open from before is let go (others see it is free)
+  if (typeof fatpdi !== 'undefined' && fatpdi.focus && fatpdi._focusStage && typeof _fpRelease === 'function') {
+    _fpRelease(fatpdi.focus, fatpdi._focusStage, fatpdi._focusType);
+    fatpdi.focus = null; fatpdi.focusSnap = null; fatpdi._focusStage = null; fatpdi._focusType = null;
+  }
+  state.cardType = ct;
+  const sel = document.getElementById('inp-card-type'); if (sel) sel.value = ct;   // next login starts on it
+  const fs = document.getElementById('inp-find-serial'); if (fs) fs.value = '';
+  updateCardBadges();
+  goToResume();   // clears any card state and reloads Home for the new type
+  showToast(`Card type: ${ct}`, 'ok');
+}
+
+// v1.43: Home screen labels / sections for the card type logged in with
+function _resumeForCardType() {
+  const ct = state.cardType || 'RLL';
+  const grn = ct === 'GRN40';
+  const rb = document.getElementById('resume-card-badge'); if (rb) rb.textContent = ct;
+  const h = document.getElementById('resume-find-serial-head');
+  if (h) h.textContent = grn ? 'Find by Sight Serial' : 'Find by Launcher Serial';
+  const fs = document.getElementById('inp-find-serial');
+  if (fs) fs.placeholder = grn ? 'e.g. GRN-6403 or 6403' : (ct === 'XRGL40' ? 'e.g. X26 2060' : 'e.g. RLL 26004');
+  // a sight is not on a trolley — no Find by Trolley on GRN40
+  const tr = document.getElementById('resume-find-trolley');
+  if (tr) tr.style.display = grn ? 'none' : '';
+  document.querySelectorAll('#resume-switch-type button[data-ct]').forEach(b => {
+    const on = b.dataset.ct === ct;
+    b.disabled = on;
+    b.classList.toggle('on', on);
+  });
+}
+
 // ─── IDENTITY GRID (dynamic per card type) ────────────────────────────────────
 function buildIdentityGrid() {
   const grid = document.getElementById('identity-fields-grid');
@@ -429,7 +468,8 @@ function buildIdentityGrid() {
       <div class="card-cell span2">
         <label class="yellow">Sight Serial No ★</label>
         <div class="serial-row">
-          <input type="text" id="inp-sight-serial" placeholder="Tap 📷 or type" autocapitalize="characters" spellcheck="false" onchange="resetSightConfirm()">
+          <input type="text" id="inp-sight-serial" placeholder="GRN-…  tap 📷 or type the number" autocapitalize="characters" spellcheck="false"
+                 onfocus="_grnPrefixFocus(this)" onblur="_grnPrefixBlur(this)" onchange="resetSightConfirm()">
           <img class="serial-thumb" id="thumb-inp-sight-serial">
           <button class="cam-btn" onclick="captureSerial('inp-sight-serial','photo_sight', true)">📷</button>
           <button class="cam-btn" id="btn-sight-confirm" style="background:var(--accent);color:#fff;" onclick="confirmSightSerial()">✓</button>
@@ -447,11 +487,9 @@ function buildIdentityGrid() {
       <div class="card-cell">
         <label>Year of Manufacturing</label>
         <select id="inp-year" onchange="scheduleAutoSave()"></select>
-      </div>
-      <div class="card-cell">
-        <label>Trolley No</label>
-        <select id="inp-trolley-no" onchange="handleTrolleyChange()"></select>
       </div>`;
+    // v1.43 (20/11/2026): no Trolley No on the GRN40 card — a sight is not on a
+    // trolley; it goes onto the trolley with its gun (picked on the XRGL40 card)
     return;
   }
 
@@ -2625,8 +2663,26 @@ function normaliseSerial(raw, cardType) {
     s = s.replace(/[^A-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
   } else {
     s = s.replace(/[^A-Z0-9 \-]/g, '').replace(/\s+/g, ' ').trim();
+    // v1.43 (20/11/2026): GRN40 sight serials are GRN-nnnn — just the number
+    // ("6403") or GRN with no dash ("GRN6403") becomes GRN-6403. Anything
+    // else typed is left exactly as it was.
+    if (cardType === 'GRN40') {
+      if (/^[0-9]+$/.test(s)) s = 'GRN-' + s;
+      else if (/^GRN[0-9]+$/.test(s)) s = 'GRN-' + s.slice(3);
+    }
   }
   return s;
+}
+
+// v1.43: the GRN40 sight box starts with GRN- — the operator types the number
+function _grnPrefixFocus(inp) {
+  if (inp && !inp.value && !inp.readOnly) {
+    inp.value = 'GRN-';
+    try { inp.setSelectionRange(4, 4); } catch (e) { /* some keyboards */ }
+  }
+}
+function _grnPrefixBlur(inp) {
+  if (inp && inp.value.trim().toUpperCase() === 'GRN-') inp.value = '';
 }
 
 
