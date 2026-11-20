@@ -722,7 +722,7 @@ function _renderFatPdiUnit() {
   let html = `<div class="fp-band">
       <div class="fp-stage">${stageName} · ${_fpEsc(fatpdi.docCode || '')}</div>
       <div class="fp-serial">${_fpEsc(us)}</div>
-      <div class="fp-meta">Trolley ${u.trolleyNumber||'—'} · Pos ${u.trolleyPosition||'—'}${u.sightSerial && u.launcherSerial ? ` · Sight ${_fpEsc(u.sightSerial)}` : ''}${u.status !== 'COMPLETE' ? ` · build ${_fpEsc(u.status||'IN PROGRESS')}` : ''}${fatpdi.adminPreview ? ' · ADMIN PREVIEW (not saved)' : ''}</div>
+      <div class="fp-meta">${fatpdi.cardType === 'GRN40' ? 'Sight' : `Trolley ${u.trolleyNumber||'—'} · Pos ${u.trolleyPosition||'—'}`}${u.sightSerial && u.launcherSerial ? ` · Sight ${_fpEsc(u.sightSerial)}` : ''}${u.status !== 'COMPLETE' ? ` · build ${_fpEsc(u.status||'IN PROGRESS')}` : ''}${fatpdi.adminPreview ? ' · ADMIN PREVIEW (not saved)' : ''}</div>
       ${_fpBandStatus(us)}
     </div>
     <div id="fp-unit-count" style="font-size:12px;color:var(--text-dim,#8fa3c0);margin:0 0 8px 2px;"></div>`;
@@ -991,7 +991,16 @@ async function saveFatPdiUnit() {
   if (p.done < p.total &&
       !confirm(`${us}: only ${p.done} of ${p.total} items are marked.\n\nSave what is marked now and finish the rest later?`)) return;
   const ok = await saveFatPdi(us);
-  if (ok) closeFatPdiUnit(true);
+  if (!ok) return;
+  // v1.43 (20/11/2026): GRN40 PDI — stay on the sight after Save, so the
+  // Final Sign-Off below can be done straight away (it used to close the page)
+  if (fatpdi.stage === 'PDI' && fatpdi.cardType === 'GRN40' && fatpdi.focus === us) {
+    _renderFatPdiUnit();   // shows what is saved and re-checks the sign-off list
+    const fin = document.getElementById('fp-final');
+    if (fin && fin.scrollIntoView) fin.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  closeFatPdiUnit(true);
 }
 
 function _setFatPdiResult(btn) {
