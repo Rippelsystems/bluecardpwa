@@ -298,6 +298,7 @@ async function loadBuild(id) {
   const row=data[0];
   state.buildId=row.id;
   if (typeof resetCardRearAssy === 'function') resetCardRearAssy();   // v1.32
+  state.sightPick = null;                                              // v1.42
   // formData must NEVER carry a copy of checks: identity auto-save spreads
   // formData into the update, so a stale checks snapshot taken here would
   // overwrite every tick made since (the "ticks wiped" bug).
@@ -321,6 +322,7 @@ async function loadBuild(id) {
 function startNewCard() {
   state.buildId=null; state._storedComponents={}; state._dupComponents={};
   if (typeof resetCardRearAssy === 'function') resetCardRearAssy();   // v1.32
+  state.sightPick = null;                                              // v1.42
   state.formData={operator_number:state.operator,card_type:state.cardType,status:'IN PROGRESS',session_start:new Date().toISOString()};
   state.checks={}; state.serialVerified=false;
   state._dirtyChecks={}; state._idBase=null;   // v1.35
@@ -335,6 +337,7 @@ function goToResume() {
   state.buildId=null; state.formData={}; state.checks={}; state.serialVerified=false; state._storedComponents={}; state._dupComponents={};
   state._dirtyChecks={}; state._idBase=null;   // v1.35
   if (typeof resetCardRearAssy === 'function') resetCardRearAssy();   // v1.32
+  state.sightPick = null;                                              // v1.42
   show('screen-resume'); loadResumeScreen();
 }
 
@@ -439,7 +442,7 @@ function buildIdentityGrid() {
       </div>
       <div class="card-cell">
         <label>Contract</label>
-        <select id="inp-contract" style="font-family:var(--font-ui);font-size:13px;" onchange="loadSerialsForProject(this.value);scheduleAutoSave()"></select>
+        <select id="inp-contract" style="font-family:var(--font-ui);font-size:13px;" onchange="loadSerialsForProject(this.value);scheduleAutoSave();if(typeof onSightContractChanged==='function')onSightContractChanged()"></select>
       </div>
       <div class="card-cell">
         <label>Year of Manufacturing</label>
@@ -453,14 +456,18 @@ function buildIdentityGrid() {
   }
 
   // RLL and XRGL40 share the same base layout
+  // v1.42 (20/11/2026): the XRGL40 sight is picked from the approved GRN40
+  // sights (sightpick.js); typing by hand needs the Admin PIN
   const sightRow = (state.cardType==='XRGL40') ? `
     <div class="card-cell">
-      <label class="yellow">Sight Serial No</label>
+      <label class="yellow">Sight Serial No ★</label>
+      <div id="sp-pick" class="ra-pick" style="display:none;"></div>
       <div class="serial-row">
-        <input type="text" id="inp-sight-serial" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+        <input type="text" id="inp-sight-serial" placeholder="Pick from the list" autocapitalize="characters" spellcheck="false" readonly>
         <img class="serial-thumb" id="thumb-inp-sight-serial">
-        <button class="cam-btn" onclick="captureSerial('inp-sight-serial','photo_sight', true)">📷</button>
+        <button class="cam-btn" id="cam-inp-sight-serial" onclick="captureSerial('inp-sight-serial','photo_sight', true)">📷</button>
       </div>
+      <div id="sp-info" class="ra-info" style="display:none;"></div>
     </div>` : '<div class="card-cell"></div>';
 
   const hfmProdRow = (state.cardType==='XRGL40') ? `
@@ -501,7 +508,7 @@ function buildIdentityGrid() {
     </div>
     <div class="card-cell">
       <label>Contract</label>
-      <select id="inp-contract" style="font-family:var(--font-ui);font-size:13px;" onchange="loadSerialsForProject(this.value);scheduleAutoSave()"></select>
+      <select id="inp-contract" style="font-family:var(--font-ui);font-size:13px;" onchange="loadSerialsForProject(this.value);scheduleAutoSave();if(typeof onSightContractChanged==='function')onSightContractChanged()"></select>
     </div>
     <!-- Launcher Serial — full width with confirm -->
     <div class="card-cell span2">
@@ -591,6 +598,8 @@ function buildIdentityGrid() {
     ${hfmProdRow}`;
   // v1.32: HRC Serial No from the Rear Assy list (rearassy.js)
   if (typeof refreshCardRearAssy === 'function') setTimeout(refreshCardRearAssy, 150);
+  // v1.42: XRGL40 Sight Serial No from the approved sights (sightpick.js)
+  if (typeof refreshCardSight === 'function') setTimeout(refreshCardSight, 150);
 }
 
 // ─── IDENTITY SAVE/RESTORE ────────────────────────────────────────────────────
@@ -636,6 +645,8 @@ function refreshIdentity() {
   updateCardBadges();
   // v1.32: Rear Assy on the HRC box — after the boxes are filled (100 ms above)
   if (typeof refreshCardRearAssy === 'function') setTimeout(refreshCardRearAssy, 150);
+  // v1.42: XRGL40 sight from the approved list — after the boxes are filled
+  if (typeof refreshCardSight === 'function') setTimeout(refreshCardSight, 150);
 }
 
 function resetSerialConfirm() {
@@ -1177,6 +1188,8 @@ async function saveIdentity() {
     const dup = _duplicateComponentError(error);
     const gate = _trolleyGateError(error);   // v1.37
     if (gate) { showToast('🚫 Not saved — ' + gate, 'error'); _trolleyRevert(); return; }
+    const sgate = (typeof _sightGateError === 'function') ? _sightGateError(error) : null;   // v1.42
+    if (sgate) { showToast('🚫 Not saved — ' + sgate, 'error'); _sightRevert(); return; }
     showToast(dup ? '🚫 Not saved — ' + dup : 'Save failed — ' + (error.message||'check connection'), 'error');
     return;
   }
@@ -2494,6 +2507,13 @@ async function autoSaveIdentity() {
 
   } catch(e) {
     console.error('[AutoSave]', e);
+    const sgate = (typeof _sightGateError === 'function') ? _sightGateError(e) : null;   // v1.42
+    if (sgate) {
+      showToast('🚫 Not saved — ' + sgate, 'error');
+      _sightRevert();
+      if (indEl) { indEl.textContent = '🚫 Not saved — sight must come from the approved list'; indEl.style.color = 'var(--fail, #e03c3c)'; }
+      return;
+    }
     const gate = _trolleyGateError(e);   // v1.37: wrong trolley place refused by the database
     if (gate) {
       showToast('🚫 Not saved — ' + gate, 'error');
