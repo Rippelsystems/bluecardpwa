@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
-  <link rel="stylesheet" href="css/style.css?v=1.42">
+  <link rel="stylesheet" href="css/style.css?v=1.43">
   <!-- ── SITE ACCESS GATE (Rippel Matrix BCDS) — see js/sitegate.js ───────── -->
   <style>
     html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
@@ -93,7 +93,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:8px;font-size:13px;font-weight:700;color:#ffffff;letter-spacing:0.08em;text-align:center;font-family:monospace;">
-    v1.42 · 20 Nov 2026
+    v1.43 · 20 Nov 2026
   </div>
 
 </section>
@@ -109,12 +109,13 @@
     <div class="section-head"><span class="section-num">A</span><h2>My Incomplete Cards</h2></div>
     <div id="my-cards-list"><div class="loading-msg">Loading…</div></div>
     <div class="divider"></div>
-    <div class="section-head"><span class="section-num">B</span><h2>Find by Launcher Serial</h2></div>
+    <div class="section-head"><span class="section-num">B</span><h2 id="resume-find-serial-head">Find by Launcher Serial</h2></div>
     <div style="display:flex;gap:8px;margin-bottom:16px;">
       <input type="text" id="inp-find-serial" placeholder="e.g. RLL 26004"
              autocapitalize="characters" style="flex:1;" spellcheck="false">
       <button class="btn btn-primary" style="width:auto;padding:11px 16px;" onclick="findBySerial()">Find</button>
     </div>
+    <div id="resume-find-trolley">
     <div class="section-head"><span class="section-num">C</span><h2>Find by Trolley</h2></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
       <div class="field-group" style="margin:0;">
@@ -127,9 +128,17 @@
       </div>
     </div>
     <button class="btn btn-secondary" onclick="findByTrolley()">Find by Trolley / Position</button>
+    </div>
     <div class="divider"></div>
     <button class="btn btn-primary" onclick="startNewCard()">+ Start New Build Card</button>
-    <button class="btn btn-secondary" style="margin-top:8px;" onclick="changeCardType()">🔄 Change Card Type / End Session</button>
+    <!-- v1.43 (20/11/2026): switch card type here — same operator, no End Session -->
+    <div id="resume-switch-type" class="switch-type">
+      <span class="switch-type-lbl">Switch card type:</span>
+      <button type="button" data-ct="RLL" onclick="switchCardType('RLL')">RLL 37/38</button>
+      <button type="button" data-ct="XRGL40" onclick="switchCardType('XRGL40')">XRGL40</button>
+      <button type="button" data-ct="GRN40" onclick="switchCardType('GRN40')">GRN40</button>
+    </div>
+    <button class="btn btn-secondary" style="margin-top:8px;" onclick="changeCardType()">🔄 Change Operator / End Session</button>
 
   </div>
 </section>
@@ -332,6 +341,12 @@
   .ra-tag { align-items:center; white-space:nowrap; background:#5d4037; color:#fff; font-size:11px; font-weight:800;
             border-radius:6px; padding:5px 8px; font-family:var(--font-mono,monospace); }
   input.ra-locked { color:#3e2723 !important; background:#f6efec !important; }
+  /* v1.43: Home — switch card type (white text on the blue "on" button) */
+  .switch-type { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:12px; }
+  .switch-type-lbl { font-size:12px; font-weight:700; color:var(--text-dim,#5a6a85); margin-right:2px; }
+  .switch-type button { flex:1; min-width:90px; padding:10px 8px; font-size:13px; font-weight:700; cursor:pointer;
+            border:1px solid var(--border); border-radius:var(--radius,8px); background:var(--surface); color:var(--text); }
+  .switch-type button.on { background:var(--accent); border-color:var(--accent); color:#ffffff; cursor:default; opacity:1; }
 </style>
 
 <!-- ══ IDENTITY ══════════════════════════════════════════════════════════════ -->
@@ -521,16 +536,16 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/supabase.js?v=1.42"></script>
-<script src="js/sitegate.js?v=1.42"></script>
-<script src="js/logo.js?v=1.42"></script>
-<script src="js/cardconfig.js?v=1.42"></script>
-<script src="js/fatpdi_config.js?v=1.42"></script>
-<script src="js/app.js?v=1.42"></script>
-<script src="js/fatpdi.js?v=1.42"></script>
-<script src="js/camera_enhanced.js?v=1.42"></script>
-<script src="js/rearassy.js?v=1.42"></script>
-<script src="js/sightpick.js?v=1.42"></script>
+<script src="js/supabase.js?v=1.43"></script>
+<script src="js/sitegate.js?v=1.43"></script>
+<script src="js/logo.js?v=1.43"></script>
+<script src="js/cardconfig.js?v=1.43"></script>
+<script src="js/fatpdi_config.js?v=1.43"></script>
+<script src="js/app.js?v=1.43"></script>
+<script src="js/fatpdi.js?v=1.43"></script>
+<script src="js/camera_enhanced.js?v=1.43"></script>
+<script src="js/rearassy.js?v=1.43"></script>
+<script src="js/sightpick.js?v=1.43"></script>
 
 <script>
 // Set logos immediately after logo.js loads
