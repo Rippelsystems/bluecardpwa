@@ -35,7 +35,8 @@ const fatpdi = {
   by: {},               // v1.35: by[unitSerial][itemId] = operator who saved that result
   busy: {},             // v1.35: busy[unitSerial] = [{op, since}] — who has the gun open right now
   _opening: false,      // v1.35: a unit is being opened (one tap = one open)
-  _touchAt: 0           // v1.35: last "still working on it" stamp sent
+  _touchAt: 0,          // v1.35: last "still working on it" stamp sent
+  _readyShown: null     // v1.44: unit the "ready for final approval" pop-up was shown for
 };
 const FP_BUSY_MINUTES = 30;
 const FP_STRICT_ALL_ITEMS = true;   // v1.39: every FAT / PDI item required (no old-list exception)
@@ -189,6 +190,7 @@ function openFatPdi(stage, cardType) {
   const scr = document.getElementById('screen-fatpdi');
   if (scr) scr.dataset.fpStage = stageCfg.acceptance ? 'ACC' : stage;
   fatpdi.focus = null; fatpdi.focusSnap = null;
+  fatpdi._readyShown = null; _fpCloseReadyPopup();   // v1.44
   _fpShowList();
   document.getElementById('fatpdi-title').textContent =
     stageCfg.acceptance ? `${stageCfg.title || 'Final Acceptance Checklist'} — ${typeCfg.label}` : `${stage} — ${typeCfg.label}`;
@@ -704,6 +706,8 @@ async function openFatPdiUnit(us) {
   fatpdi.focus = us;
   fatpdi._focusStage = fatpdi.stage; fatpdi._focusType = fatpdi.cardType;
   fatpdi.focusSnap = { results: { ...(fatpdi.results[us] || {}) }, remarks: fatpdi.remarks[us] || '' };
+  fatpdi._readyShown = null;   // v1.44: say it again for the gun being opened
+  _fpCloseReadyPopup();
   _renderFatPdiUnit();
   const lv = document.getElementById('fatpdi-list-view'), uv = document.getElementById('fatpdi-unit-view');
   if (lv) lv.style.display = 'none';
@@ -742,12 +746,13 @@ function _renderFatPdiUnit() {
     </div>
     <div class="fp-actions">
       <button class="btn btn-primary fp-save" id="btn-fp-save-unit" onclick="saveFatPdiUnit()">💾 Save ${_fpEsc(us)}</button>
-      <button class="btn btn-secondary" onclick="closeFatPdiUnit()">← Back to list (don't save)</button>
+      <button class="btn btn-secondary" id="btn-fp-back" onclick="closeFatPdiUnit()">${_fpBackLabel()}</button>
     </div>`;
   // v1.31: the final sign-off lives on the PDI page only
-  if (fatpdi.stage === 'PDI') html += `<div class="fp-final" id="fp-final"><h3>🖊 FINAL SIGN-OFF</h3>
+  if (fatpdi.stage === 'PDI') html += `<div class="fp-final" id="fp-final"><h3>🖊 FINAL APPROVAL SIGN-OFF</h3>
       <div id="fp-final-list" style="font-size:12px;color:var(--text-dim,#8fa3c0);">Checking the card…</div>
-      <button class="btn fp-signoff" id="btn-fp-signoff" disabled onclick="signOffFromPdi()">🖊 Sign Off ${_fpEsc(us)}</button>
+      <button class="btn fp-signoff" id="btn-fp-signoff" disabled onclick="signOffFromPdi()">${_fpSignOffLabel(us)}</button>
+      <button type="button" class="fp-backlink" id="btn-fp-back2" onclick="closeFatPdiUnit()">← Back to the list</button>
     </div>`;
   uv.innerHTML = html;
   _fpUpdateCount();
@@ -839,19 +844,80 @@ function _fpFinalChecks(build, fatRows, pdiResults, fatCutoff) {
   return out;
 }
 
+// v1.44 (21/11/2026): the floor was missing the green button, so it says what
+// it is and carries the serial — "🖊 FINAL APPROVAL SIGN-OFF · RLL 260207".
+function _fpSignOffLabel(us) { return `🖊 FINAL APPROVAL SIGN-OFF · ${_fpEsc(us || '')}`; }
+
 function _fpRenderFinal(list, signed) {
   const el = document.getElementById('fp-final-list'), btn = document.getElementById('btn-fp-signoff');
   if (!el || !btn) return;
   if (signed) {
     el.innerHTML = `<div class="fp-req"><span class="ok">✓</span><span><b>Signed off</b> — OP ${_fpEsc(signed.by || '?')} · ${_fpEsc(String(signed.at || '').slice(0,16).replace('T',' '))}</span></div>`;
     btn.disabled = true; btn.textContent = '✓ Signed off';
+    btn.classList.remove('fp-blink');
+    _fpCloseReadyPopup();
     return;
   }
   el.innerHTML = list.map(r => `<div class="fp-req"><span class="${r.ok ? 'ok' : 'no'}">${r.ok ? '✓' : '✗'}</span>
       <span>${_fpEsc(r.label)}${!r.ok && r.why ? `<br><span class="why">${_fpEsc(r.why)}</span>` : ''}</span></div>`).join('');
-  const all = list.length && list.every(r => r.ok);
-  btn.disabled = !all || fatpdi.adminPreview;
+  const all = !!(list.length && list.every(r => r.ok));
+  const live = all && !fatpdi.adminPreview;
+  btn.disabled = !live;
   btn.title = fatpdi.adminPreview ? 'Admin Preview — nothing is saved' : (all ? '' : 'Everything above must be ✓ first');
+  // v1.44: blink while it is live, and say so once — a gun is NOT finished
+  // until this is pressed (RLL 260207, 20/11/2026: all three stages done,
+  // never signed off, because Save took the operator back to the list).
+  btn.classList.toggle('fp-blink', live);
+  const us = fatpdi.focus;
+  if (live && us && fatpdi._readyShown !== us) {
+    fatpdi._readyShown = us;
+    _fpReadyPopup(us);
+  }
+  if (!live) _fpCloseReadyPopup();
+}
+
+// ── v1.44: "ready for final approval" pop-up ────────────────────────────────
+function _fpCloseReadyPopup() {
+  const e = document.getElementById('fp-ready-pop');
+  if (e && e.remove) e.remove();
+}
+
+function _fpReadyPopup(us) {
+  _fpCloseReadyPopup();
+  const ov = document.createElement('div');
+  ov.id = 'fp-ready-pop';
+  ov.className = 'fp-pop-wrap';
+  ov.innerHTML =
+    `<div class="fp-pop">
+       <div class="fp-pop-head">✅ READY FOR FINAL APPROVAL</div>
+       <div class="fp-pop-serial">${_fpEsc(us)}</div>
+       <div class="fp-pop-txt">Identity, assembly checks, FAT and PDI are all complete.<br>
+         This unit is <b>not finished</b> until the Final Approval Sign-Off is pressed.</div>
+       <button type="button" class="fp-pop-go" id="fp-pop-go">🖊 Go to Final Approval Sign-Off</button>
+       <button type="button" class="fp-pop-later" id="fp-pop-later">Not now</button>
+     </div>`;
+  document.body.appendChild(ov);
+  const later = document.getElementById('fp-pop-later');
+  const go    = document.getElementById('fp-pop-go');
+  if (later) later.onclick = _fpCloseReadyPopup;
+  if (go) go.onclick = () => {
+    _fpCloseReadyPopup();
+    const fin = document.getElementById('fp-final');
+    if (fin && fin.scrollIntoView) fin.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const b = document.getElementById('btn-fp-signoff');
+    if (b && !b.disabled && b.focus) { try { b.focus({ preventScroll: true }); } catch (e) { b.focus(); } }
+  };
+}
+
+// v1.44: is this gun ready to be signed off, from what is already loaded?
+// (no extra read — signOffFromPdi re-reads the card fresh before it signs)
+function _fpReadyToSign(us) {
+  if (fatpdi.stage !== 'PDI' || fatpdi.adminPreview) return false;
+  const f = fatpdi._final;
+  if (!f || f.us !== us || !f.build) return false;
+  if (String(f.build.status || '').toUpperCase() === 'COMPLETE') return false;
+  const list = _fpFinalChecks(f.build, f.fat, fatpdi.results[us], f.fatCutoff);
+  return !!(list.length && list.every(r => r.ok));
 }
 
 async function _fpRefreshFinal(reload) {
@@ -891,7 +957,7 @@ async function signOffFromPdi() {
       showToast('🚫 Not everything is complete — see the list', 'error');
       return;
     }
-    if (!confirm(`FINAL SIGN-OFF\n\n${us}\nIdentity, assembly checks, FAT and PDI are all complete.\n\nSign off as OP ${op} — ready for shipping?`)) {
+    if (!confirm(`FINAL APPROVAL SIGN-OFF\n\n${us}\nIdentity, assembly checks, FAT and PDI are all complete.\n\nSign off as OP ${op} — ready for shipping?`)) {
       _fpRenderFinal(list); return;
     }
     // PDI marks on screen not saved yet → save them first
@@ -920,7 +986,7 @@ async function signOffFromPdi() {
     showToast('❌ Sign-off failed — ' + ((e && e.message) || e), 'error');
     _fpRefreshFinal(false);
   } finally {
-    if (btn && btn.isConnected && btn.textContent === 'Checking…') btn.textContent = `🖊 Sign Off ${us}`;
+    if (btn && btn.isConnected && btn.textContent === 'Checking…') btn.textContent = _fpSignOffLabel(us);
   }
 }
 
@@ -929,6 +995,18 @@ function _fpUpdateCount() {
   if (!el || !fatpdi.focus) return;
   const p = _fpProgress(fatpdi.focus);
   el.textContent = `${p.done} of ${p.total} marked${p.fails ? ` · ${p.fails} FAIL` : ''}`;
+  _fpUpdateBack();
+}
+
+// v1.44 (21/11/2026): the way back out of a unit. The warning only belongs
+// there while something is NOT saved — after a Save "(don't save)" read as if
+// it would throw the work away.
+function _fpBackLabel() {
+  return _fpChanged() ? "← Back to list (don't save)" : '← Back to list';
+}
+function _fpUpdateBack() {
+  const b = document.getElementById('btn-fp-back');
+  if (b) b.textContent = _fpBackLabel();
 }
 
 function _fpSet(btn) {
@@ -951,6 +1029,7 @@ function _fpRemarks(ta) {
   fatpdi.remarks[fatpdi.focus] = ta.value;
   fatpdi.touched[fatpdi.focus] = true;
   _fpTouch(fatpdi.focus);   // v1.35
+  _fpUpdateBack();          // v1.44
 }
 
 function _fpChanged() {
@@ -972,6 +1051,7 @@ function closeFatPdiUnit(skipAsk) {
   }
   const st = fatpdi._focusStage, ct = fatpdi._focusType;
   fatpdi.focus = null; fatpdi.focusSnap = null; fatpdi._focusStage = null; fatpdi._focusType = null;
+  fatpdi._readyShown = null; _fpCloseReadyPopup();   // v1.44
   _fpShowList();
   _renderFatPdiList();
   if (us) {
@@ -993,12 +1073,19 @@ async function saveFatPdiUnit() {
   const ok = await saveFatPdi(us);
   if (!ok) return;
   // v1.43 (20/11/2026): GRN40 PDI — stay on the sight after Save, so the
-  // Final Sign-Off below can be done straight away (it used to close the page)
-  if (fatpdi.stage === 'PDI' && fatpdi.cardType === 'GRN40' && fatpdi.focus === us) {
+  // Final Approval Sign-Off below can be done straight away.
+  // v1.44 (21/11/2026): the same for RLL / XRGL40, but only when the gun is
+  // now ready to be signed off — a part-done gun still goes back to the list
+  // as before. Save used to close the page on a finished gun, which is how
+  // RLL 260207 ended up through FAT and PDI with no sign-off.
+  if (fatpdi.stage === 'PDI' && fatpdi.focus === us) {
+    const ready = _fpReadyToSign(us);
     _renderFatPdiUnit();   // shows what is saved and re-checks the sign-off list
-    const fin = document.getElementById('fp-final');
-    if (fin && fin.scrollIntoView) fin.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
+    if (ready || fatpdi.cardType === 'GRN40') {
+      const fin = document.getElementById('fp-final');
+      if (fin && fin.scrollIntoView) fin.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
   }
   closeFatPdiUnit(true);
 }
