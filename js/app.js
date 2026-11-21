@@ -2038,16 +2038,71 @@ function setCheck(id,result) {
 
 function setCheckValue(id,value) { if(!state.checks[id]) state.checks[id]={}; state.checks[id].value=value; _markCheckDirty(id); }
 
-function editAssyNo(id) {
+// ─── v1.45 (21/11/2026, Gerhard) — the Assy No must be a REAL operator ───────
+// This box took whatever was typed and stored it. "007" was entered as "07" on
+// 20 checks, so Matrix counted one man as two people. An Assy No says WHO did
+// the work, so an unchecked one is worthless as evidence.
+// Now: the number is read as a number and written three-wide (7, 07 and 007 are
+// one man; 70 is somebody else), and it must exist in the operator list
+// (assemblers). Anything else is refused and NOTHING on the card is changed.
+let _opList = null;          // [{operator_number, name}] — read once per session
+
+function _opNo(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  return /^[0-9]+$/.test(s) ? String(parseInt(s, 10)).padStart(3, '0') : s;
+}
+
+async function _operators(force) {
+  if (_opList && !force) return _opList;
+  try {
+    const list = (typeof getAssemblers === 'function')
+      ? await getAssemblers()
+      : ((await supabaseClient.from('assemblers').select('operator_number,name')).data || []);
+    _opList = (list || []).map(a => ({ no: _opNo(a.operator_number),
+                                       name: (a.name || '').trim() }))
+                          .filter(a => a.no);
+  } catch (e) {
+    console.warn('[AssyNo] operator list', e);
+    _opList = null;          // not read — try again next time, never guess
+  }
+  return _opList;
+}
+
+async function editAssyNo(id) {
   const current=state.checks[id]?.assy_no||state.operator;
-  const newNo=prompt(`Assy No for this check:\nCurrently: OP ${current}\n\nEnter operator number:`);
-  if(!newNo||!newNo.trim()) return;
+  const raw=prompt(`Assy No for this check:\nCurrently: OP ${current}\n\nEnter operator number:`);
+  if(!raw||!raw.trim()) return;
+  const newNo=_opNo(raw);
+
+  // the operator list decides — no list, no change
+  let ops = await _operators();
+  if (!ops) {
+    showToast('⚠ Could not check the operator list — nothing changed. Check Wi-Fi and try again.', 'error');
+    return;
+  }
+  let who = ops.find(a => a.no === newNo);
+  if (!who) {
+    // not in the list we hold — it may have been added since, so read it again
+    ops = await _operators(true);
+    if (!ops) {
+      showToast('⚠ Could not check the operator list — nothing changed. Check Wi-Fi and try again.', 'error');
+      return;
+    }
+    who = ops.find(a => a.no === newNo);
+  }
+  if (!who) {
+    showToast(`🚫 ${raw.trim()} is not an operator number — nothing changed`, 'error');
+    return;
+  }
+
   const prev = state.checks[id]?.assy_no || state.operator;
+  if (_opNo(prev) === newNo) { showToast(`Already OP ${newNo}`, 'warn'); return; }
   if(!state.checks[id]) state.checks[id]={};
-  state.checks[id].assy_no=newNo.trim();
+  state.checks[id].assy_no=newNo;
   _markCheckDirty(id); if (state.buildId) _flushChecks();   // v1.35
-  const stamp=document.getElementById(`assy-${id}`); if(stamp) stamp.textContent=`OP ${newNo.trim()}`;
-  showToast(`Assy No → ${newNo.trim()}`,'ok');
+  const stamp=document.getElementById(`assy-${id}`); if(stamp) stamp.textContent=`OP ${newNo}`;
+  showToast(`Assy No → OP ${newNo}${who.name ? ' · ' + who.name : ''}`,'ok');
   // Log the operator reassignment
   const cfg=getCardConfig();
   const checkDef = (cfg.checks||cfg.stages||[]).find(c=>c.id===id);
@@ -2056,7 +2111,7 @@ function editAssyNo(id) {
     check_id: id,
     check_label: label,
     changed_from: prev,
-    changed_to: newNo.trim(),
+    changed_to: newNo,
     by_operator: state.operator,
     timestamp: new Date().toISOString()
   });
