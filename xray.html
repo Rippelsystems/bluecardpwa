@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#1F3864">
+<title>X-Ray Reports — Rippel Matrix</title>
+<link rel="manifest" href="manifest.json">
+<!-- ─────────────────────────────────────────────────────────────────────────
+  xray.html — X-RAY REPORTS on the floor tablet   (v1.0, 23 Nov 2026)
+
+  Gammex radiograph every casting on a tree and send back FORM EL060. Each
+  casting is shot from FOUR ANGLES, A B C D. A casting that fails even ONE
+  angle is scrapped and goes back to Vestcast to be melted and recast.
+
+  QC engrave the serials BEFORE the castings go to X-ray, running on from the
+  list on the dot matrix engraver. The report is imported on a laptop
+  (Matrix → QUALITY → X-Ray Reports). THIS page is for the floor: typing the
+  engraved serial against each casting with the castings in front of you.
+
+  - The NUMBER only, no prefix. The Blue Card compares with the prefix
+    stripped (RLL = low velocity, LRC / LFM; XRGL40 = high velocity, HRC / HFM).
+  - EVERY SERIAL SAVES AS IT IS ENTERED — one call per casting — so a flat
+    battery or a lost Wi-Fi connection can never lose a whole report's typing.
+  - A scrapped casting is shown in red and still takes its serial: that is how
+    you know which engraved casting goes back to Vestcast.
+  - Writes go through tablet_xray_set_serial, which re-checks the PIN every
+    time and refuses a number already engraved on another casting of the same
+    item, naming the one it is on.
+
+  LIVE only — the Blue Card has no TEST (js/supabase.js).
+  Lives in the Blue Card repo (bluecardpwa) next to index.html.
+──────────────────────────────────────────────────────────────────────────── -->
+<!-- ── SITE ACCESS GATE (same as index.html — see js/sitegate.js) ── -->
+<style>
+  html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
+  #bcds-gate { position: fixed; inset: 0; z-index: 99999; background: #0a1628;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    font-family: system-ui, sans-serif; }
+  #bcds-gate .bcds-card { width: 100%; max-width: 360px; background: #111f38;
+    border: 1px solid #1e3354; border-radius: 14px; padding: 28px 24px; }
+  #bcds-gate .bcds-brand { color: #4a9eff; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.18em; text-align: center; }
+  #bcds-gate .bcds-title { color: #fff; font-size: 26px; font-weight: 800;
+    text-align: center; margin-top: 8px; }
+  #bcds-gate .bcds-sub { color: #6f86a8; font-size: 12px; text-align: center;
+    margin: 4px 0 22px; }
+  #bcds-gate label { display: block; color: #8fa3c0; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.08em; margin-bottom: 6px; }
+  #bcds-gate input { width: 100%; box-sizing: border-box; padding: 13px 14px;
+    font-size: 16px; border-radius: 8px; border: 1px solid #1e3354; background: #f1f3f6;
+    color: #0a1628; outline: none; }
+  #bcds-gate #bcds-err { color: #ff6b6b; font-size: 12px; font-weight: 600;
+    min-height: 18px; margin: 8px 0 4px; text-align: center; }
+  #bcds-gate button { width: 100%; padding: 13px; font-size: 15px; font-weight: 700;
+    border: none; border-radius: 8px; background: #1a6cf0; color: #fff; cursor: pointer; }
+  #bcds-gate button:disabled { opacity: 0.6; }
+  #bcds-gate .bcds-note { color: #4a6a8a; font-size: 11px; text-align: center; margin-top: 12px; }
+</style>
+<script>
+  (function () {
+    var ok = false;
+    try { var v = JSON.parse(localStorage.getItem('bcds_site_access_v1') || 'null'); ok = !!(v && v.until > Date.now()); } catch (e) {}
+    if (!ok) document.documentElement.classList.add('bcds-locked');
+  })();
+</script>
+<style>
+  :root{
+    --navy:#1F3864; --green:#1B5E20; --amber:#E65100; --red:#B71C1C;
+    --bg:#F2F4F7; --panel:#FFFFFF; --border:#D8DEE8; --text:#1A2333; --muted:#6B7688;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; min-height:100%; background:var(--bg);
+    font-family:"Segoe UI",Roboto,Arial,sans-serif; color:var(--text);
+    -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+  #app{ min-height:100vh; display:flex; flex-direction:column; }
+  header{ background:var(--navy); color:#fff; padding:14px 20px; display:flex;
+    align-items:center; gap:14px; position:sticky; top:0; z-index:10; }
+  header .titles{ flex:1; min-width:0; }
+  header h1{ margin:0; font-size:20px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  header .sub{ font-size:12px; color:#A8C4E0; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  header .who{ font-size:13px; color:#C8D6EA; text-align:right; }
+  header .file{ position:absolute; top:3px; right:8px; font-size:9px; color:#8DA2C2; }
+  header button{ background:rgba(255,255,255,.14); border:none; color:#fff;
+    font-size:15px; font-weight:600; padding:11px 16px; border-radius:8px; }
+  .envbar{ text-align:center; font-weight:700; font-size:13px; padding:5px; color:#fff; background:var(--green); }
+  main{ flex:1; padding:18px 20px 120px; max-width:1200px; width:100%; margin:0 auto; }
+  .label{ font-size:12px; font-weight:700; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.6px; margin:18px 0 8px 2px; }
+  .empty{ text-align:center; color:var(--muted); margin-top:50px; font-size:16px; line-height:1.5; }
+  .err{ background:#FDECEA; border:1px solid var(--red); color:var(--red);
+    padding:12px 16px; border-radius:8px; font-size:15px; margin-bottom:14px; white-space:pre-line; }
+  .info{ background:#EAF0FA; border:1px solid #B9CBE6; color:var(--navy);
+    padding:12px 16px; border-radius:8px; font-size:14px; margin-bottom:14px; }
+  .spin{ text-align:center; color:var(--muted); margin-top:60px; font-size:16px; }
+
+  /* login — identical to Component Count */
+  .names{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+  .name{ background:var(--panel); border:2px solid var(--border); border-radius:12px;
+    padding:18px 10px; text-align:center; font-size:17px; font-weight:700; }
+  .pinwrap{ display:flex; flex-direction:column; align-items:center; margin-top:10px; }
+  .dots{ display:flex; gap:14px; margin:14px 0 22px; }
+  .dot{ width:18px; height:18px; border-radius:50%; border:2px solid var(--navy); }
+  .dot.f{ background:var(--navy); }
+  .keys{ display:grid; grid-template-columns:repeat(3,84px); gap:14px; }
+  .key{ height:72px; border-radius:14px; border:1px solid var(--border); background:var(--panel);
+    font-size:26px; font-weight:600; color:var(--text); }
+  .key.s{ font-size:14px; color:var(--muted); }
+
+  /* report list */
+  .search{ width:100%; font-size:18px; padding:14px 16px; border-radius:10px;
+    border:1px solid var(--border); margin-bottom:14px; }
+  .rep{ background:var(--panel); border:2px solid var(--border); border-radius:12px;
+    padding:16px 18px; margin-bottom:12px; display:flex; align-items:center; gap:14px; }
+  .rep:active{ border-color:var(--navy); }
+  .rep .grow{ flex:1; min-width:0; }
+  .rep .main{ font-size:18px; font-weight:800; }
+  .rep .meta{ font-size:13px; color:var(--muted); margin-top:3px; }
+  .badge{ font-size:12px; font-weight:700; padding:6px 11px; border-radius:14px; color:#fff; white-space:nowrap; }
+  .b-done{ background:var(--green); } .b-part{ background:var(--amber); }
+  .b-none{ background:#ECEFF1; color:var(--text); } .b-scrap{ background:var(--red); }
+
+  /* castings */
+  .prog{ position:sticky; top:62px; z-index:9; background:var(--bg); padding:8px 0 10px; }
+  .pbar{ height:10px; border-radius:6px; background:#DCE2EC; overflow:hidden; }
+  .pbar span{ display:block; height:100%; background:var(--green); }
+  .pnum{ font-size:14px; font-weight:700; color:var(--muted); margin-top:6px; }
+  .cast{ background:var(--panel); border:2px solid var(--border); border-radius:12px;
+    padding:12px 14px; margin-bottom:10px; display:flex; align-items:center; gap:14px; }
+  .cast.bad{ background:#FDECEA; border-color:var(--red); }
+  .cast.next{ border-color:var(--navy); box-shadow:0 0 0 3px #EAF0FA; }
+  .cast .no{ flex:0 0 42px; font-size:13px; font-weight:700; color:var(--muted); }
+  .cast .tree{ flex:0 0 150px; font-size:17px; font-weight:800; }
+  .cast.bad .tree{ color:var(--red); }
+  .cast .angles{ flex:0 0 104px; font-size:15px; font-weight:800; letter-spacing:3px; }
+  .cast .ok{ color:var(--green); } .cast .no-go{ color:var(--red); }
+  .cast .grow{ flex:1; min-width:0; }
+  .cast input{ width:100%; font-size:20px; font-weight:700; padding:12px 14px;
+    border:2px solid var(--border); border-radius:10px; letter-spacing:1px;
+    background:#fff; color:var(--text); }
+  .cast.bad input{ border-color:var(--red); }
+  .cast input:focus{ border-color:var(--navy); outline:none; }
+  .cast .state{ flex:0 0 94px; text-align:right; font-size:12px; font-weight:700; }
+  .s-saved{ color:var(--green); } .s-busy{ color:var(--muted); } .s-err{ color:var(--red); }
+  .scrapnote{ font-size:12px; font-weight:700; color:var(--red); margin-top:4px; }
+
+  .btn{ width:100%; border:none; border-radius:10px; padding:16px; font-size:18px; font-weight:700; margin-top:8px; }
+  .go{ background:var(--green); color:#fff; } .sec{ background:#ECEFF1; color:var(--text); }
+  .btn:disabled{ opacity:.45; }
+  .bar{ position:fixed; left:0; right:0; bottom:0; background:#fff; border-top:1px solid var(--border);
+    padding:12px 20px; display:flex; justify-content:center; z-index:20; }
+  .bar .inner{ display:flex; gap:12px; width:100%; max-width:1200px; align-items:center; }
+  .bar .btn{ margin-top:0; }
+  .bar .msg{ flex:1; font-size:14px; font-weight:700; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase.js?v=1.47"></script>
+<script src="js/sitegate.js?v=1.47"></script>
+<script>
+"use strict";
+// ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
+// LIVE only — the Blue Card has no TEST database.
+const XR_VERSION = "1.0";
+const CALL_TIMEOUT = window.__xrTimeout || 20000;
+const IDLE_MINUTES = 10;
+const db = window.__xrDb || window.supabase.createClient(
+  SUPABASE_URL, SUPABASE_ANON_KEY,
+  { auth: { persistSession: false, autoRefreshToken: false, storageKey: "xray-live" } });
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+const S = {
+  screen: "names", users: null, usersErr: "", user: null, pin: "", pinErr: "",
+  reports: null, reportsErr: "", search: "",
+  report: null, trees: null, treesErr: "",
+  saving: {},          // tree id -> true while its own save is in flight
+  saved: {},           // tree id -> "ok" | error text
+  msg: "",
+};
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+const $ = (h) => { document.getElementById("app").innerHTML = h; };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function withTimeout(p, ms = CALL_TIMEOUT) {
+  return Promise.race([p, new Promise((_, rej) =>
+    setTimeout(() => rej(new Error("No answer from the database (Wi-Fi?)")), ms))]);
+}
+function header(title, sub, back) {
+  return `
+    <div class="envbar">✓ LIVE — Production database</div>
+    <header>
+      <span class="file">xray.html v${XR_VERSION}</span>
+      ${back ? `<button onclick="${back}">${back === "toMenu()" ? "‹ Menu" : "‹ Back"}</button>` : ""}
+      <div class="titles"><h1>${esc(title)}</h1><div class="sub">${esc(sub || "")}</div></div>
+      ${S.user ? `<div class="who">${esc(S.user.username)}<br><a style="color:#A8C4E0" href="#" onclick="logout();return false">Log out</a></div>` : ""}
+    </header>`;
+}
+
+// idle logout (shared tablet)
+let idleTimer = null;
+function touch() {
+  clearTimeout(idleTimer);
+  if (S.user)
+    idleTimer = setTimeout(() => logout("Logged out after " + IDLE_MINUTES +
+      " minutes without use."), IDLE_MINUTES * 60000);
+}
+["pointerdown", "keydown"].forEach(e => document.addEventListener(e, touch, { passive: true }));
+function logout(msg) {
+  Object.assign(S, { user: null, pin: "", report: null, trees: null,
+                     screen: "names", pinErr: msg || "", saving: {}, saved: {} });
+  render();
+}
+function toMenu() { location.href = "menu.html"; }
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+function render() {
+  ({ names: rNames, pin: rPin, reports: rReports, castings: rCastings })[S.screen]();
+}
+
+// 1. who is filling the serials ──────────────────────────────────────────────
+async function loadUsers() {
+  S.users = null; render();
+  try {
+    const [u, p] = await withTimeout(Promise.all([
+      db.from("users").select("username, role").eq("active", true).order("username"),
+      db.from("role_permissions").select("role")
+        .eq("button_name", "X-Ray Reports").eq("allowed", true),
+    ]));
+    if (u.error) throw u.error;
+    if (p.error) throw p.error;
+    const ok = new Set((p.data || []).map(r => r.role)); ok.add("Admin");
+    S.users = (u.data || []).filter(x => ok.has(x.role)); S.usersErr = "";
+  } catch (e) {
+    S.users = []; S.usersErr = "Could not load names: " + (e.message || e);
+  }
+  render();
+}
+function rNames() {
+  const list = S.users === null ? `<div class="spin">Loading…</div>`
+    : S.users.length ? `<div class="names">${S.users.map((u, i) =>
+        `<div class="name" onclick="pickUser(${i})">${esc(u.username)}</div>`).join("")}</div>`
+    : `<div class="empty">No one may fill in X-ray serials yet.<br>
+        Give the role “X-Ray Reports” in Matrix → Admin → Permissions.</div>`;
+  $(header("X-Ray Reports", "Who is filling in the serials?", "toMenu()") + `<main>
+      ${S.pinErr ? `<div class="info">${esc(S.pinErr)}</div>` : ""}
+      ${S.usersErr ? `<div class="err">${esc(S.usersErr)}<br><br>
+        <button class="btn sec" style="width:auto" onclick="loadUsers()">Try again</button></div>` : ""}
+      <div class="label">Tap your name</div>${list}</main>`);
+}
+function pickUser(i) {
+  S.user = { username: S.users[i].username };
+  S.pin = ""; S.pinErr = ""; S.screen = "pin"; render();
+}
+
+// 2. PIN ─────────────────────────────────────────────────────────────────────
+function rPin() {
+  const dots = [0, 1, 2, 3].map(i => `<div class="dot ${i < S.pin.length ? "f" : ""}"></div>`).join("");
+  $(header("X-Ray Reports", "Enter your Matrix PIN", "S.user=null;S.screen='names';render()") + `<main>
+     <div class="pinwrap">
+       <div style="font-size:20px;font-weight:700">${esc(S.user.username)}</div>
+       <div class="dots">${dots}</div>
+       <div class="keys">
+         ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="key" onclick="pinKey('${n}')">${n}</button>`).join("")}
+         <button class="key s" onclick="S.pin='';render()">Clear</button>
+         <button class="key" onclick="pinKey('0')">0</button>
+         <button class="key s" onclick="S.pin=S.pin.slice(0,-1);render()">⌫</button>
+       </div>
+       <div style="color:var(--red);font-weight:600;margin-top:16px;min-height:22px">${esc(S.pinErr)}</div>
+     </div></main>`);
+}
+async function pinKey(d) {
+  if (S.pin.length >= 4) return;
+  S.pin += d; S.pinErr = ""; render();
+  if (S.pin.length < 4) return;
+  try {
+    const { data, error } = await withTimeout(
+      db.rpc("tablet_xray_login", { p_username: S.user.username, p_pin: S.pin }));
+    if (error) throw error;
+    if (!data.ok) { S.pin = ""; S.pinErr = "Incorrect PIN — try again."; return render(); }
+    if (!data.can_xray) {
+      S.pin = ""; S.pinErr = `${data.role} may not fill in X-ray serials.`; return render();
+    }
+    S.user = { username: data.username, role: data.role };
+    touch(); loadReports();
+  } catch (e) {
+    S.pin = ""; S.pinErr = "Could not check the PIN: " + (e.message || e); render();
+  }
+}
+
+// 3. which report ────────────────────────────────────────────────────────────
+async function loadReports() {
+  S.screen = "reports"; S.reports = null; S.reportsErr = ""; render();
+  try {
+    const r = await withTimeout(db.from("xray_reports")
+      .select("id, report_no, report_date, item, order_no, job_no, client_country, " +
+              "contract_name, trees_count, scrapped_trees")
+      .order("report_date", { ascending: false })
+      .order("report_no", { ascending: false }).limit(500));
+    if (r.error) throw r.error;
+    const reports = r.data || [];
+    // how many serials are already in, per report — one read for the lot
+    if (reports.length) {
+      const t = await withTimeout(db.from("xray_trees")
+        .select("report_id, serial")
+        .in("report_id", reports.map(x => x.id)).limit(40000));
+      if (t.error) throw t.error;
+      const filled = {};
+      (t.data || []).forEach(row => {
+        if (String(row.serial || "").trim()) filled[row.report_id] = (filled[row.report_id] || 0) + 1;
+      });
+      reports.forEach(x => { x.filled = filled[x.id] || 0; });
+    }
+    S.reports = reports; S.reportsErr = "";
+  } catch (e) {
+    S.reports = []; S.reportsErr = "Could not load the reports: " + (e.message || e);
+  }
+  render();
+}
+function rReports() {
+  const term = (S.search || "").trim().toUpperCase();
+  const list = (S.reports || []).filter(r => !term ||
+    [r.report_no, r.order_no, r.job_no, r.item].some(v =>
+      String(v || "").toUpperCase().includes(term)));
+  const body = S.reports === null ? `<div class="spin">Loading…</div>`
+    : !(S.reports || []).length
+      ? `<div class="empty">No X-ray reports have been imported yet.<br>
+          They are imported on a laptop:<br>Matrix → QUALITY → X-Ray Reports.</div>`
+      : !list.length ? `<div class="empty">Nothing matches “${esc(S.search)}”.</div>`
+      : list.map(r => {
+          const total = Number(r.trees_count || 0);
+          const got = Number(r.filled || 0);
+          const cls = !got ? "b-none" : got >= total ? "b-done" : "b-part";
+          const scrap = Number(r.scrapped_trees || 0);
+          return `<div class="rep" onclick="openReport('${r.id}')">
+            <div class="grow">
+              <div class="main">${esc(r.report_no)} &nbsp;·&nbsp; ${esc(r.item || "")}</div>
+              <div class="meta">order ${esc(r.order_no || "—")} &nbsp;·&nbsp;
+                ${esc(r.report_date || "")} &nbsp;·&nbsp; ${total} castings
+                ${r.contract_name ? " &nbsp;·&nbsp; " + esc(r.contract_name) : ""}</div>
+            </div>
+            ${scrap ? `<span class="badge b-scrap">${scrap} scrapped</span>` : ""}
+            <span class="badge ${cls}">${got} of ${total}</span>
+          </div>`;
+        }).join("");
+  $(header("X-Ray Reports", "Pick the report you are working on", "toMenu()") + `<main>
+      ${S.reportsErr ? `<div class="err">${esc(S.reportsErr)}<br><br>
+        <button class="btn sec" style="width:auto" onclick="loadReports()">Try again</button></div>` : ""}
+      <input class="search" placeholder="Report no, order no (POA) or item"
+             value="${esc(S.search)}" oninput="S.search=this.value;rReports()">
+      ${body}</main>`);
+}
+
+// 4. the castings ────────────────────────────────────────────────────────────
+async function openReport(id) {
+  S.report = (S.reports || []).find(r => r.id === id) || null;
+  S.trees = null; S.treesErr = ""; S.saving = {}; S.saved = {}; S.msg = "";
+  S.screen = "castings"; render();
+  try {
+    const [t, a] = await withTimeout(Promise.all([
+      db.from("xray_trees").select("id, tree_no, line_no, item, serial, result")
+        .eq("report_id", id).order("line_no").limit(20000),
+      db.from("xray_results").select("tree_no, position, result")
+        .eq("report_id", id).limit(80000),
+    ]));
+    if (t.error) throw t.error;
+    if (a.error) throw a.error;
+    const angles = {};
+    (a.data || []).forEach(r => {
+      (angles[r.tree_no] = angles[r.tree_no] || {})[r.position] = r.result;
+    });
+    S.trees = (t.data || []).map(x => Object.assign({}, x, { angles: angles[x.tree_no] || {} }));
+    S.treesErr = "";
+  } catch (e) {
+    S.trees = []; S.treesErr = "Could not load the castings: " + (e.message || e);
+  }
+  render();
+}
+
+function rCastings() {
+  const r = S.report || {};
+  if (S.trees === null) {
+    $(header(esc(r.report_no || ""), "Loading the castings…", "loadReports()") +
+      `<main><div class="spin">Loading…</div></main>`);
+    return;
+  }
+  const total = S.trees.length;
+  const got = S.trees.filter(t => String(t.serial || "").trim()).length;
+  const pct = total ? Math.round(got / total * 100) : 0;
+  const nextId = (S.trees.find(t => !String(t.serial || "").trim()) || {}).id;
+
+  const rows = S.trees.map((t, i) => {
+    const bad = t.result === "REJECTED";
+    const st = S.saving[t.id] ? `<span class="s-busy">saving…</span>`
+      : S.saved[t.id] === "ok" ? `<span class="s-saved">✓ saved</span>`
+      : S.saved[t.id] ? `<span class="s-err">not saved</span>` : "";
+    const angles = "ABCD".split("").map(a => {
+      const v = t.angles[a];
+      if (!v) return `<span>·</span>`;
+      return v === "PASS" ? `<span class="ok">✓</span>` : `<span class="no-go">✗</span>`;
+    }).join("");
+    return `<div class="cast ${bad ? "bad" : ""} ${t.id === nextId ? "next" : ""}">
+      <div class="no">${i + 1}</div>
+      <div class="tree">${esc(t.tree_no)}
+        ${bad ? `<div class="scrapnote">SCRAPPED — back to Vestcast</div>` : ""}</div>
+      <div class="angles">${angles}</div>
+      <div class="grow">
+        <input id="s-${t.id}" inputmode="numeric" autocomplete="off" autocapitalize="characters"
+               spellcheck="false" placeholder="engraved number"
+               value="${esc(t.serial || "")}"
+               onfocus="this.select()"
+               onchange="saveSerial('${t.id}', this.value)"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();nextBox('${t.id}');}">
+      </div>
+      <div class="state">${st}</div>
+    </div>`;
+  }).join("");
+
+  $(header(`${r.report_no || ""} · ${r.item || ""}`,
+           `order ${r.order_no || "—"} · ${total} castings · type the engraved NUMBER only`,
+           "loadReports()") + `<main>
+      ${S.treesErr ? `<div class="err">${esc(S.treesErr)}</div>` : ""}
+      <div class="prog">
+        <div class="pbar"><span style="width:${pct}%"></span></div>
+        <div class="pnum">${got} of ${total} serials filled in${
+          Number(r.scrapped_trees || 0) ? ` &nbsp;·&nbsp; ${r.scrapped_trees} scrapped — they still need a serial` : ""}</div>
+      </div>
+      ${!total ? `<div class="empty">This report has no castings on it.</div>` : rows}
+    </main>
+    <div class="bar"><div class="inner">
+      <div class="msg ${/not saved|could not/i.test(S.msg) ? "s-err" : "s-saved"}">${esc(S.msg)}</div>
+      <button class="btn sec" style="width:auto" onclick="loadReports()">‹ Reports</button>
+    </div></div>`);
+
+  if (nextId) {
+    const el = document.getElementById("s-" + nextId);
+    if (el && !/Android|iPhone|iPad/i.test(navigator.userAgent)) el.focus();
+  }
+}
+
+function nextBox(id) {
+  const i = S.trees.findIndex(t => t.id === id);
+  for (let k = i + 1; k < S.trees.length; k++) {
+    const el = document.getElementById("s-" + S.trees[k].id);
+    if (el) { el.focus(); el.select(); return; }
+  }
+}
+
+// EVERY SERIAL SAVES ON ITS OWN, as soon as it is entered — a flat battery or a
+// lost Wi-Fi connection can never cost more than the one casting being typed.
+async function saveSerial(id, value) {
+  const tree = S.trees.find(t => t.id === id);
+  if (!tree) return;
+  const now = String(value || "").trim();
+  if (now === String(tree.serial || "").trim()) return;   // nothing changed
+  S.saving[id] = true; delete S.saved[id]; S.msg = ""; render();
+  try {
+    const { data, error } = await withTimeout(db.rpc("tablet_xray_set_serial", {
+      p_username: S.user.username, p_pin: S.pin, p_tree_id: id, p_serial: now }));
+    if (error) throw error;
+    if (!data || !data.ok) {
+      const why = (data && data.error) || "The serial was not saved.";
+      delete S.saving[id]; S.saved[id] = why; S.msg = why;
+      // put the box back to what is actually stored, so the screen never shows
+      // a number the database does not have
+      render();
+      const el = document.getElementById("s-" + id);
+      if (el) { el.value = tree.serial || ""; el.focus(); el.select(); }
+      return;
+    }
+    tree.serial = data.serial || "";
+    delete S.saving[id]; S.saved[id] = "ok";
+    S.msg = `${tree.tree_no} saved — ${data.filled} of ${data.total} filled in`;
+    if (S.report) S.report.filled = data.filled;
+    render();
+    nextBox(id);
+  } catch (e) {
+    const why = "Not saved — " + (e.message || e);
+    delete S.saving[id]; S.saved[id] = why; S.msg = why;
+    render();
+  }
+}
+
+// ─── START ───────────────────────────────────────────────────────────────────
+loadUsers();
+</script>
+</body>
+</html>
