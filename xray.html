@@ -7,7 +7,11 @@
 <title>X-Ray Reports — Rippel Matrix</title>
 <link rel="manifest" href="manifest.json">
 <!-- ─────────────────────────────────────────────────────────────────────────
-  xray.html — X-RAY REPORTS on the floor tablet   (v1.0, 23 Nov 2026)
+  xray.html — X-RAY REPORTS on the floor tablet   (v1.2, 23 Nov 2026)
+  v1.1: the angle LETTER (A B C D) is shown above each mark, so the operator
+        sees WHICH angle failed. Feeds the angle-failure statistics.
+  v1.2: HFM- / HRC- shown fixed in front of the serial box (TREE 4 = Housing
+        Front Main, TREE 5 = Rear Cross) so only the number is typed.
 
   Gammex radiograph every casting on a tree and send back FORM EL060. Each
   casting is shot from FOUR ANGLES, A B C D. A casting that fails even ONE
@@ -132,9 +136,25 @@
   .cast .no{ flex:0 0 42px; font-size:13px; font-weight:700; color:var(--muted); }
   .cast .tree{ flex:0 0 150px; font-size:17px; font-weight:800; }
   .cast.bad .tree{ color:var(--red); }
-  .cast .angles{ flex:0 0 104px; font-size:15px; font-weight:800; letter-spacing:3px; }
+  /* 23/11/2026 (Gerhard): the angle LETTER sits above its own mark, so the
+     operator can see WHICH angle failed, not just that one did — that is what
+     the angle-failure statistics are built on. */
+  .cast .angles{ flex:0 0 118px; display:flex; gap:7px; }
+  .cast .ang{ display:flex; flex-direction:column; align-items:center; width:22px; }
+  .cast .ang i{ font-style:normal; font-size:10px; font-weight:800; line-height:1;
+    color:var(--muted); letter-spacing:.5px; }
+  .cast .ang b{ font-size:17px; font-weight:800; line-height:1.15; }
+  .cast .ang.f i{ color:var(--red); }        /* the angle that failed */
   .cast .ok{ color:var(--green); } .cast .no-go{ color:var(--red); }
-  .cast .grow{ flex:1; min-width:0; }
+  .cast .grow{ flex:1; min-width:0; display:flex; align-items:center; gap:0; }
+  /* 23/11/2026 (Gerhard): TREE 4- is a Housing Front Main (HFM-), TREE 5- a
+     Rear Cross (HRC-). The prefix is fixed in front so only the number is
+     typed. What is SAVED is the number alone. */
+  .cast .pre{ flex:0 0 auto; font-size:19px; font-weight:800; letter-spacing:1px;
+    color:var(--muted); padding:12px 2px 12px 10px; border:2px solid var(--border);
+    border-right:none; border-radius:10px 0 0 10px; background:#F7F9FC; }
+  .cast.bad .pre{ border-color:var(--red); color:var(--red); }
+  .cast .pre + input{ border-radius:0 10px 10px 0; border-left:none; }
   .cast input{ width:100%; font-size:20px; font-weight:700; padding:12px 14px;
     border:2px solid var(--border); border-radius:10px; letter-spacing:1px;
     background:#fff; color:var(--text); }
@@ -164,7 +184,7 @@
 "use strict";
 // ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
 // LIVE only — the Blue Card has no TEST database.
-const XR_VERSION = "1.0";
+const XR_VERSION = "1.2";
 const CALL_TIMEOUT = window.__xrTimeout || 20000;
 const IDLE_MINUTES = 10;
 const db = window.__xrDb || window.supabase.createClient(
@@ -198,6 +218,35 @@ function header(title, sub, back) {
       <div class="titles"><h1>${esc(title)}</h1><div class="sub">${esc(sub || "")}</div></div>
       ${S.user ? `<div class="who">${esc(S.user.username)}<br><a style="color:#A8C4E0" href="#" onclick="logout();return false">Log out</a></div>` : ""}
     </header>`;
+}
+
+// ─── THE ENGRAVED PREFIX ─────────────────────────────────────────────────────
+// The first number in the tree says which casting it is: TREE 4-... is a
+// HOUSING FRONT MAIN, TREE 5-... a REAR CROSS. Both are XRGL40 — the HIGH
+// velocity parts — so they are engraved HFM- and HRC- (the RLL low-velocity
+// equivalents are LFM- and LRC-). Shown in front of the box so only the number
+// is typed; THE NUMBER ALONE IS WHAT IS SAVED. Kept in step with
+// frm_xray.py: ITEM_PREFIX / TREE_PREFIX / serial_prefix / strip_serial_prefix.
+const ITEM_PREFIX = { "HOUSING FRONT MAIN": "HFM-", "REAR CROSS": "HRC-" };
+const TREE_PREFIX = { "4": "HFM-", "5": "HRC-" };
+
+// Never guessed: the ITEM off the Gammex report and the tree's leading number
+// must agree. An item we do not know, a tree we do not recognise, or the two
+// disagreeing all give "" and the box is simply typed in full.
+function serialPrefix(item, treeNo) {
+  const byItem = ITEM_PREFIX[String(item || "").trim().toUpperCase()] || "";
+  const m = String(treeNo || "").toUpperCase().match(/^\s*TREE\s*([0-9A-Z]+)/);
+  const byTree = m ? (TREE_PREFIX[m[1]] || "") : "";
+  if (byItem && byTree && byItem !== byTree) return "";
+  return byItem || byTree;
+}
+
+// Operators type the prefix out of habit — take it off so it is never doubled.
+function stripSerialPrefix(value, prefix) {
+  const v = String(value || "").trim();
+  if (!prefix || !v) return v;
+  const letters = prefix.replace(/-+$/, "");
+  return v.replace(new RegExp("^\\s*" + letters + "[\\s\\-_]*", "i"), "").trim();
 }
 
 // idle logout (shared tablet)
@@ -394,13 +443,17 @@ function rCastings() {
 
   const rows = S.trees.map((t, i) => {
     const bad = t.result === "REJECTED";
+    const pre = serialPrefix(t.item || (S.report || {}).item, t.tree_no);
     const st = S.saving[t.id] ? `<span class="s-busy">saving…</span>`
       : S.saved[t.id] === "ok" ? `<span class="s-saved">✓ saved</span>`
       : S.saved[t.id] ? `<span class="s-err">not saved</span>` : "";
+    // each angle carries its own letter above its mark
     const angles = "ABCD".split("").map(a => {
       const v = t.angles[a];
-      if (!v) return `<span>·</span>`;
-      return v === "PASS" ? `<span class="ok">✓</span>` : `<span class="no-go">✗</span>`;
+      if (!v) return `<span class="ang"><i>${a}</i><b>·</b></span>`;
+      const pass = v === "PASS";
+      return `<span class="ang${pass ? "" : " f"}"><i>${a}</i>`
+           + `<b class="${pass ? "ok" : "no-go"}">${pass ? "✓" : "✗"}</b></span>`;
     }).join("");
     return `<div class="cast ${bad ? "bad" : ""} ${t.id === nextId ? "next" : ""}">
       <div class="no">${i + 1}</div>
@@ -408,6 +461,7 @@ function rCastings() {
         ${bad ? `<div class="scrapnote">SCRAPPED — back to Vestcast</div>` : ""}</div>
       <div class="angles">${angles}</div>
       <div class="grow">
+        ${pre ? `<span class="pre">${pre}</span>` : ""}
         <input id="s-${t.id}" inputmode="numeric" autocomplete="off" autocapitalize="characters"
                spellcheck="false" placeholder="engraved number"
                value="${esc(t.serial || "")}"
@@ -454,7 +508,8 @@ function nextBox(id) {
 async function saveSerial(id, value) {
   const tree = S.trees.find(t => t.id === id);
   if (!tree) return;
-  const now = String(value || "").trim();
+  const now = stripSerialPrefix(value, serialPrefix(
+    tree.item || (S.report || {}).item, tree.tree_no));
   if (now === String(tree.serial || "").trim()) return;   // nothing changed
   S.saving[id] = true; delete S.saved[id]; S.msg = ""; render();
   try {
