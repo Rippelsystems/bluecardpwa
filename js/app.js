@@ -266,8 +266,10 @@ async function loadResumeScreen() {
 
 async function findBySerial() {
   let serial=document.getElementById('inp-find-serial').value.trim().toUpperCase();
-  if (state.cardType==='GRN40') serial = normaliseSerial(serial, 'GRN40');   // v1.43: "6403" finds GRN-6403
-  if (!serial || serial==='GRN-'){showToast('Enter a serial number','error');return;}
+  // v1.43: "6403" finds GRN-6403.  v1.45: "2499" / "X26-2499" finds X26 2499
+  if (state.cardType==='GRN40' || state.cardType==='XRGL40')
+    serial = normaliseSerial(serial, state.cardType);
+  if (!serial || serial==='GRN-' || serial==='X26'){showToast('Enter a serial number','error');return;}
   let {data}=await supabaseClient.from('weapon_builds').select('id,card_type').eq('launcher_serial',serial).neq('status','COMPLETE').limit(1);
   // GRN40 cards are identified by sight_serial (no launcher_serial at all)
   if (!data||data.length===0) {
@@ -305,7 +307,9 @@ async function loadBuild(id) {
   // formData into the update, so a stale checks snapshot taken here would
   // overwrite every tick made since (the "ticks wiped" bug).
   state.formData={...row}; delete state.formData.checks;
-  state.cardType=row.card_type||'RLL';
+  // v1.45: a card with no card_type recorded used to throw the operator back
+  // to RLL in the middle of an XRGL40 run — keep the type being worked in.
+  state.cardType=row.card_type||state.cardType||'RLL';
   _rememberStoredComponents(row);   // v1.28: a number this card ALREADY holds never blocks its saves
   // A saved row's identifying serial was already validated when it was
   // first confirmed — GRN40 = sight_serial, RLL/XRGL40 = launcher_serial.
@@ -446,7 +450,8 @@ function _resumeForCardType() {
   const h = document.getElementById('resume-find-serial-head');
   if (h) h.textContent = grn ? 'Find by Sight Serial' : 'Find by Launcher Serial';
   const fs = document.getElementById('inp-find-serial');
-  if (fs) fs.placeholder = grn ? 'e.g. GRN-6403 or 6403' : (ct === 'XRGL40' ? 'e.g. X26 2060' : 'e.g. RLL 26004');
+  if (fs) fs.placeholder = grn ? 'e.g. GRN-6403 or 6403'
+                              : (ct === 'XRGL40' ? 'e.g. X26 2499 or 2499' : 'e.g. RLL 26004');
   // a sight is not on a trolley — no Find by Trolley on GRN40
   const tr = document.getElementById('resume-find-trolley');
   if (tr) tr.style.display = grn ? 'none' : '';
@@ -508,6 +513,13 @@ function buildIdentityGrid() {
       <div id="sp-info" class="ra-info" style="display:none;"></div>
     </div>` : '<div class="card-cell"></div>';
 
+  // v1.45 (23/11/2026): XRGL40 launcher serials all start X26 — the box
+  // starts with it so only the number is typed (RLL is left exactly as it was)
+  const lPrefix = (state.cardType === 'XRGL40')
+    ? ' onfocus="_x26PrefixFocus(this)" onblur="_x26PrefixBlur(this)"' : '';
+  const lPlace  = (state.cardType === 'XRGL40')
+    ? 'X26 …  tap 📷 or type the number' : 'Tap 📷 or type';
+
   const hfmProdRow = (state.cardType==='XRGL40') ? `
     <div class="card-cell">
       <label class="yellow">HFM Production No</label>
@@ -552,8 +564,8 @@ function buildIdentityGrid() {
     <div class="card-cell span2">
       <label class="yellow">Launcher Serial No ★</label>
       <div class="serial-row">
-        <input type="text" id="inp-launcher-serial" placeholder="Tap 📷 or type"
-               autocapitalize="characters" spellcheck="false" onchange="resetSerialConfirm()">
+        <input type="text" id="inp-launcher-serial" placeholder="${lPlace}"
+               autocapitalize="characters" spellcheck="false"${lPrefix} onchange="resetSerialConfirm()">
         <img class="serial-thumb" id="thumb-inp-launcher-serial">
         <button class="cam-btn" onclick="captureSerial('inp-launcher-serial','photo_launcher', false)">📷</button>
       </div>
@@ -2715,7 +2727,16 @@ function normaliseSerial(raw, cardType) {
     // Collapse again after cleaning
     s = s.replace(/\s+/g, ' ').trim();
   } else if (cardType === 'XRGL40') {
-    s = s.replace(/[^A-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    // v1.45 (23/11/2026, Gerhard): XRGL40 launcher serials are "X26 nnnn" in
+    // the Serial Register — a SPACE between X26 and the number, not a dash.
+    // Typed as "2499", "X262499", "X26-2499" or "x26 2499" they all become
+    // "X26 2499", so the register is found however it was entered. A dash is
+    // read as the separator rather than thrown away, which is what made
+    // "X26-2499" come back as not in the register.
+    s = s.replace(/[^A-Z0-9 \-_]/g, '').replace(/[\-_]+/g, ' ')
+         .replace(/\s+/g, ' ').trim();
+    if (/^[0-9]+$/.test(s)) s = 'X26 ' + s;
+    else if (/^X26[0-9]+$/.test(s)) s = 'X26 ' + s.slice(3);
   } else {
     s = s.replace(/[^A-Z0-9 \-]/g, '').replace(/\s+/g, ' ').trim();
     // v1.43 (20/11/2026): GRN40 sight serials are GRN-nnnn — just the number
@@ -2730,6 +2751,18 @@ function normaliseSerial(raw, cardType) {
 }
 
 // v1.43: the GRN40 sight box starts with GRN- — the operator types the number
+// v1.45: the launcher box on an XRGL40 starts with "X26 " — the operator
+// types only the number. Blank again on leaving if nothing was typed.
+function _x26PrefixFocus(inp) {
+  if (inp && !inp.value && !inp.readOnly) {
+    inp.value = 'X26 ';
+    try { inp.setSelectionRange(4, 4); } catch (e) { /* some keyboards */ }
+  }
+}
+function _x26PrefixBlur(inp) {
+  if (inp && inp.value.trim().toUpperCase() === 'X26') inp.value = '';
+}
+
 function _grnPrefixFocus(inp) {
   if (inp && !inp.value && !inp.readOnly) {
     inp.value = 'GRN-';
