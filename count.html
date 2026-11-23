@@ -5,7 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Rippel Matrix — Component Count</title>
 <!-- ─────────────────────────────────────────────────────────────────────────
-  count.html — Component Count on the tablet (v1.1, 31 Oct 2026)
+  count.html — Component Count on the tablet (v1.2, 23 Nov 2026)
+  v1.2: MANUAL COUNT + CAMERA SWITCH. The camera is no longer the only way
+        in. "How the count is entered" on the Home screen switches between
+        📷 Camera counts it  and  ⌨ Type the quantity in. The choice is
+        remembered on that tablet (localStorage "cntCountMode"), so the
+        storeman sets it once. It can also be switched inside a count.
+        In ⌨ Type mode the camera is never started, OpenCV.js is never
+        downloaded (no 10 MB, no camera permission) and the quantity is
+        typed on a big number pad. A typed count saves camera_qty = NULL,
+        which is how the laptop can tell a typed count from a camera one.
+        A typed count has NO proof photo — there is no photo to take.
   v1.1: PART SHAPES (part_shapes_31Oct.sql). Count, tap ONE part on the
         photo, "Save as the shape" — from then on that part is counted by
         its shape: only outlines that match (outline + proportions + size)
@@ -164,6 +174,19 @@
   .seg{ display:flex; gap:6px; }
   .seg button{ flex:1; padding:10px 4px; font-size:13px; font-weight:700; border-radius:8px; border:2px solid var(--border); background:#fff; }
   .seg button.on{ border-color:var(--navy); background:#EAF0FA; color:var(--navy); }
+
+  /* manual count (v1.2) */
+  .modeseg{ max-width:520px; }
+  .modeseg button{ padding:16px 8px; font-size:16px; }
+  .mgrid{ display:grid; grid-template-columns:1fr 320px; gap:16px; align-items:start; }
+  @media (max-width: 900px){ .mgrid{ grid-template-columns:1fr; } }
+  /* short screen (a 1366x740 laptop) — the whole pad must show without scrolling */
+  @media (max-height: 820px){
+    .mgrid .big{ font-size:56px; }
+    .mgrid .keys{ grid-template-columns:repeat(3,76px); gap:10px; margin-top:10px !important; }
+    .mgrid .key{ height:58px; font-size:23px; }
+    .mgrid .adj button{ height:50px; }
+  }
   .ctl{ display:flex; align-items:center; gap:10px; margin-top:12px; font-size:14px; }
   .ctl input[type=range]{ flex:1; height:30px; }
   .ctl .v{ width:44px; text-align:right; font-weight:700; }
@@ -192,7 +215,7 @@
 // ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
 // LIVE = the Blue Card connection (js/supabase.js). ?env=test = TEST database
 // (same TEST connection as receiving.html).
-const CNT_VERSION = "1.1";
+const CNT_VERSION = "1.2";
 const CNT_TEST = /(^|[?&])env=test(&|$)/i.test(location.search);
 const CNT_TEST_URL = "https://wtkbsvopuvtxiprjtqqx.supabase.co";
 const CNT_TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0a2Jzdm9wdXZ0eGlwcmp0cXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTUzNjIsImV4cCI6MjA5NjE3MTM2Mn0.q3cRrSbgmgzaw9PzHEuXaic-3Cl-JAiAPVbZnyoY8SQ";
@@ -228,6 +251,22 @@ const S = {
   shapes: {}, shapesByCode: {}, shapesLoaded: false,   // v1.1 — part_shapes (no outline points)
   ref: null, result: null, err: "",
 };
+
+// ─── HOW THE COUNT IS ENTERED (v1.2) ─────────────────────────────────────────
+// "camera" = the camera counts it (v1.1 behaviour, the default).
+// "manual" = the quantity is typed on a number pad; the camera is never
+// started and OpenCV.js is never downloaded.
+// Remembered on this tablet so the storeman sets it once.
+const CMODE_KEY = "cntCountMode";
+let CMODE = "camera";
+try { if (localStorage.getItem(CMODE_KEY) === "manual") CMODE = "manual"; } catch (e) { /* private mode */ }
+function setMode(m) {
+  CMODE = (m === "manual") ? "manual" : "camera";
+  try { localStorage.setItem(CMODE_KEY, CMODE); } catch (e) { /* private mode */ }
+}
+const MANUAL_MAX = 6;        // digits that can be typed — a fat-finger guard, not a stock rule
+const M = { typed: "" };     // what has been typed for the count in hand
+const mVal = () => (M.typed === "" ? null : parseInt(M.typed, 10));
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const $ = (h) => { document.getElementById("app").innerHTML = h; };
@@ -328,7 +367,8 @@ function toMenu() { stopCam(); location.href = "menu.html" + (CNT_TEST ? "?env=t
 function render() {
   if (S.screen !== "camera") stopCam();
   ({ names: rNames, pin: rPin, home: rHome, stores: rStores, items: rItems, recounts: rRecounts,
-     pos: rPos, lines: rLines, camera: rCamera, saving: rSaving, unsure: rUnsure, done: rDone })[S.screen]();
+     pos: rPos, lines: rLines, camera: rCamera, manual: rManual,
+     saving: rSaving, unsure: rUnsure, done: rDone })[S.screen]();
 }
 
 // 1. who is counting
@@ -419,8 +459,15 @@ function rHome() {
         <div><div class="t">Recounts${S.recountN ? ` <span class="badge b-rec">${S.recountN}</span>` : ""}</div>
           <div class="w">Parts the floor manager sent back to be counted again.</div></div></div>
     </div>
-    <div class="info" style="margin-top:22px">Lay the parts out on the counting tray so they do not touch.
-      Count GOOD parts only — rejected / quarantined parts are not counted.</div>
+    <div class="label">How the count is entered</div>
+    <div class="seg modeseg">
+      <button class="${CMODE === "camera" ? "on" : ""}" onclick="setMode('camera');render()">📷 Camera counts it</button>
+      <button class="${CMODE === "manual" ? "on" : ""}" onclick="setMode('manual');render()">⌨ Type the quantity in</button>
+    </div>
+    <div class="info" style="margin-top:10px">${CMODE === "manual"
+      ? "⌨ <b>Type mode</b> — the camera is not used. Count the parts yourself and type the quantity on the number pad. You can switch to the camera inside a count."
+      : "📷 <b>Camera mode</b> — lay the parts out on the counting tray so they do not touch. Count GOOD parts only — rejected / quarantined parts are not counted."}
+      <br>This stays set on this tablet until you change it.</div>
   </main>`);
 }
 
@@ -644,9 +691,12 @@ const C = { stream: null, frame: null, blobs: [], auto: 0, adj: 0, refArea: null
 let SHAPE = null;         // the shape in use for this count (full row with outline points) — v1.1
 const MAX_W = 1280;
 
+// openCamera() is the one way into a count — it opens the camera or the number
+// pad, whichever this tablet is set to. Nothing above it needs to know which.
 function openCamera() {
   Object.assign(C, { frame: null, blobs: [], auto: 0, adj: 0, refArea: null, detail: "", shot: false, selPt: null, sel: null });
   S.ref = null; S.err = ""; SHAPE = null;
+  if (CMODE === "manual") return openManual();
   S.screen = "camera"; render();
   startCam();
   loadJobShape();
@@ -684,6 +734,16 @@ function rCamera() {
           <label class="btn sec" id="btnFile" style="display:block;text-align:center;cursor:pointer">
             🖼 Use a photo<input type="file" accept="image/*" style="display:none" onchange="fromFile(this)"></label>
         </div>
+        <div class="card">
+          <div class="label" style="margin-top:0">How the count is entered</div>
+          <div class="seg">
+            <button class="on">📷 Camera</button>
+            <button onclick="toManual()">⌨ Type it in</button>
+          </div>
+          <div class="legend">Camera not working for this part? Tap ⌨ Type it in —
+            the camera switches off on this tablet and you type the quantity instead.
+            Nothing counted so far is kept.</div>
+        </div>
         <div class="card"><details ${CS.pol !== "auto" || CS.thr || CS.minp !== 15 || !CS.edge || CS.strict !== 20 || !CS.sizeOn || CS.sizeTol !== 25 ? "open" : ""}>
           <summary>Counting settings</summary>
           <div class="label">Parts vs background</div>
@@ -715,6 +775,83 @@ function rCamera() {
   }
   if (C.stream) attachStream();
 }
+// ─── 6b. MANUAL COUNT — type the quantity (v1.2) ─────────────────────────────
+// No camera, no OpenCV, no photo. The number pad is the same size as the PIN
+// pad so it works with gloves on, and it does not bring up the tablet keyboard
+// over the screen the way a text field does.
+function openManual() {
+  M.typed = "";
+  S.ref = newRef();                 // a new count = a new reference (same rule as the camera)
+  S.screen = "manual"; render();
+}
+function rManual() {
+  const j = S.job;
+  const keys = [7, 8, 9, 4, 5, 6, 1, 2, 3].map(d => `<button class="key" onclick="mKey(${d})">${d}</button>`).join("")
+    + `<button class="key s" onclick="mClear()">Clear</button>`
+    + `<button class="key" onclick="mKey(0)">0</button>`
+    + `<button class="key s" onclick="mBack()">⌫</button>`;
+  $(header(j.title, j.sub, j.back) + `<main>
+    ${j.note ? `<div class="info">${esc(j.note)}</div>` : ""}
+    <div class="mgrid">
+      <div class="card">
+        <div class="label" style="margin-top:0">Counted quantity</div>
+        <div class="big" id="mcount">${M.typed === "" ? "–" : esc(M.typed)}</div>
+        <div class="detail" id="mdetail">${M.typed === ""
+          ? "Type the quantity you counted."
+          : "Check the number, then save."}</div>
+        <div class="adj"><button onclick="mAdjust(-1)">−</button><button onclick="mAdjust(1)">+</button></div>
+        <div class="pinwrap"><div class="keys" style="margin-top:14px">${keys}</div></div>
+      </div>
+      <div>
+        <div class="card">
+          <div class="label" style="margin-top:0">How the count is entered</div>
+          <div class="seg">
+            <button onclick="toCamera()">📷 Camera</button>
+            <button class="on">⌨ Type it in</button>
+          </div>
+          <div class="legend">⌨ Type mode is set on this tablet. Tapping 📷 Camera
+            switches this tablet over and starts this count again on the camera —
+            nothing typed so far is kept.</div>
+        </div>
+        <div class="card">
+          <div class="label" style="margin-top:0">Counting by hand</div>
+          <div class="legend">Count GOOD parts only — rejected / quarantined parts
+            are not counted. 0 is a valid count: type 0 and save it.<br><br>
+            A typed count has no proof photo. On the laptop it shows with no
+            camera count next to it, so the floor manager can see it was counted
+            by hand.</div>
+        </div>
+      </div>
+    </div></main>
+    <div class="bar"><div class="inner">
+      <button class="btn sec" style="width:auto;padding:16px 22px" onclick="${j.back}">Cancel</button>
+      <button class="btn go" id="btnSave" onclick="saveCount()" ${M.typed === "" ? "disabled" : ""}>✓ Save count</button>
+    </div></div>`);
+}
+function mShow() {
+  const el = document.getElementById("mcount"); if (!el) return;
+  el.textContent = M.typed === "" ? "–" : M.typed;
+  const d = document.getElementById("mdetail");
+  if (d) d.textContent = M.typed === "" ? "Type the quantity you counted." : "Check the number, then save.";
+  const b = document.getElementById("btnSave");
+  if (b) b.disabled = (M.typed === "");
+}
+function mKey(d) {
+  if (M.typed === "0") M.typed = "";                 // a leading 0 is replaced, not kept
+  if (M.typed.length >= MANUAL_MAX) return;
+  M.typed += String(d);
+  mShow();
+}
+function mBack() { M.typed = M.typed.slice(0, -1); mShow(); }
+function mClear() { M.typed = ""; mShow(); }
+function mAdjust(d) {
+  const n = Math.max(0, (M.typed === "" ? 0 : parseInt(M.typed, 10)) + d);
+  M.typed = String(n).slice(0, MANUAL_MAX);
+  mShow();
+}
+function toCamera() { setMode("camera"); openCamera(); }
+function toManual() { setMode("manual"); openManual(); }
+
 function setPol(v) {
   CS.pol = v;
   document.querySelectorAll("#pol button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
@@ -1036,13 +1173,17 @@ async function uploadShapePhoto(id, blob) {
 
 // ─── 7. SAVE — one database call; safe to repeat (same reference = not saved twice)
 async function saveCount() {
-  if (!C.frame || !S.ref) return;
-  const j = S.job, counted = finalCount();
+  const manual = (S.screen === "manual");
+  if (!S.ref) return;
+  if (manual ? M.typed === "" : !C.frame) return;
+  const j = S.job, counted = manual ? mVal() : finalCount();
   if (j.mode === "RECEIVING" && counted > j.outstanding &&
       !confirm(`${counted} counted but only ${j.outstanding} outstanding on this line.\n\nSave the count anyway? (More than ordered is booked on the laptop.)`)) return;
-  // the proof photo is made now, before the screen changes
-  j.photo = await photoBlob().catch(() => null);
-  j.counted = counted; j.camera = C.auto;
+  // the proof photo is made now, before the screen changes — a typed count has none
+  j.photo = manual ? null : await photoBlob().catch(() => null);
+  j.counted = counted;
+  j.camera = manual ? null : C.auto;   // NULL = the camera did not count this one
+  j.manual = manual;
   submitCount();
 }
 async function submitCount() {
@@ -1087,7 +1228,9 @@ function rUnsure() {
 The count may or may not have been saved. Tap “Try again” — if it was already saved
 it will NOT be saved a second time.</div>`}
     </main><div class="bar"><div class="inner">
-      <button class="btn sec" onclick="S.screen='camera';render();startCam()">Back to the count</button>
+      <button class="btn sec" onclick="${S.job && S.job.manual
+        ? "S.screen='manual';render()"
+        : "S.screen='camera';render();startCam()"}">Back to the count</button>
       ${S.notSaved ? "" : `<button class="btn go" onclick="submitCount()">Try again</button>`}</div></div>`);
 }
 function rDone() {
