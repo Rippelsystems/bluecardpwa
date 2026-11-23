@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
-  <link rel="stylesheet" href="css/style.css?v=1.46">
+  <link rel="stylesheet" href="css/style.css?v=1.47">
   <!-- ── SITE ACCESS GATE (Rippel Matrix BCDS) — see js/sitegate.js ───────── -->
   <style>
     html.bcds-locked body > *:not(#bcds-gate) { display: none !important; }
@@ -93,7 +93,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:8px;font-size:13px;font-weight:700;color:#ffffff;letter-spacing:0.08em;text-align:center;font-family:monospace;">
-    v1.46 · 23 Nov 2026
+    v1.47 · 23 Nov 2026
   </div>
 
 </section>
@@ -314,6 +314,10 @@
     0%, 100% { box-shadow:0 0 0 0 rgba(32,192,112,0.55); filter:brightness(1); }
     50%      { box-shadow:0 0 0 10px rgba(32,192,112,0); filter:brightness(1.22); }
   }
+  /* v1.47 (23/11/2026): Barrel Production No — pick the batch (XRGL40) */
+  select.batch-pick { width:100%; margin-bottom:5px; padding:9px 8px; font-size:13px; font-weight:700;
+            border:2px solid #1565c0; border-radius:8px; background:#eef4fd; color:#14346b;
+            font-family:var(--font-ui); }
   /* v1.44: the way back out of the sign-off panel */
   .fp-backlink { width:100%; margin-top:9px; padding:11px 10px; font-size:13px; font-weight:700; cursor:pointer;
                  border:1px solid var(--fp-edge); border-radius:8px; background:#ffffff; color:var(--fp-ink); }
@@ -560,16 +564,16 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script src="js/supabase.js?v=1.46"></script>
-<script src="js/sitegate.js?v=1.46"></script>
-<script src="js/logo.js?v=1.46"></script>
-<script src="js/cardconfig.js?v=1.46"></script>
-<script src="js/fatpdi_config.js?v=1.46"></script>
-<script src="js/app.js?v=1.46"></script>
-<script src="js/fatpdi.js?v=1.46"></script>
-<script src="js/camera_enhanced.js?v=1.46"></script>
-<script src="js/rearassy.js?v=1.46"></script>
-<script src="js/sightpick.js?v=1.46"></script>
+<script src="js/supabase.js?v=1.47"></script>
+<script src="js/sitegate.js?v=1.47"></script>
+<script src="js/logo.js?v=1.47"></script>
+<script src="js/cardconfig.js?v=1.47"></script>
+<script src="js/fatpdi_config.js?v=1.47"></script>
+<script src="js/app.js?v=1.47"></script>
+<script src="js/fatpdi.js?v=1.47"></script>
+<script src="js/camera_enhanced.js?v=1.47"></script>
+<script src="js/rearassy.js?v=1.47"></script>
+<script src="js/sightpick.js?v=1.47"></script>
 
 <script>
 // Set logos immediately after logo.js loads
