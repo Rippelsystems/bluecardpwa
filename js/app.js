@@ -513,6 +513,14 @@ function buildIdentityGrid() {
       <div id="sp-info" class="ra-info" style="display:none;"></div>
     </div>` : '<div class="card-cell"></div>';
 
+  // v1.47 (23/11/2026, Gerhard): most XRGL40 barrels come off the same few
+  // batches, so the Barrel Production No is picked from a list instead of
+  // typed 60 times. The box stays typeable for a barrel from a new batch.
+  // The batches live in app_settings (key xrgl40_barrel_batches) so a new one
+  // is added in Matrix / Supabase, not in a release.
+  const bpBatch = (state.cardType === 'XRGL40')
+    ? '<select id="inp-barrel-prod-batch" class="batch-pick" onchange="pickBarrelBatch(this)"></select>' : '';
+
   // v1.45 (23/11/2026): XRGL40 launcher serials all start X26 — the box
   // starts with it so only the number is typed (RLL is left exactly as it was)
   const lPrefix = (state.cardType === 'XRGL40')
@@ -520,23 +528,10 @@ function buildIdentityGrid() {
   const lPlace  = (state.cardType === 'XRGL40')
     ? 'X26 …  tap 📷 or type the number' : 'Tap 📷 or type';
 
-  const hfmProdRow = (state.cardType==='XRGL40') ? `
-    <div class="card-cell">
-      <label class="yellow">HFM Production No</label>
-      <div class="serial-row">
-        <input type="text" id="inp-hfm-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-        <img class="serial-thumb" id="thumb-inp-hfm-prod-no">
-        <button class="cam-btn" onclick="captureSerial('inp-hfm-prod-no','photo_hfm_prod', false)">📷</button>
-      </div>
-    </div>
-    <div class="card-cell">
-      <label class="yellow">HRC Production No</label>
-      <div class="serial-row">
-        <input type="text" id="inp-hrc-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
-        <img class="serial-thumb" id="thumb-inp-hrc-prod-no">
-        <button class="cam-btn" onclick="captureSerial('inp-hrc-prod-no','photo_hrc_prod', false)">📷</button>
-      </div>
-    </div>` : '';
+  // v1.47 (23/11/2026, Gerhard): the XRGL40 HFM Production No and HRC Production
+  // No boxes are taken off the card. The two columns (hfm_prod_no, hrc_prod_no)
+  // stay in weapon_builds with whatever is already in them — nothing is deleted
+  // — they are simply no longer asked for, saved or required for FAT / sign-off.
 
   grid.innerHTML = `
     <div class="card-cell">
@@ -591,6 +586,7 @@ function buildIdentityGrid() {
     </div>
     <div class="card-cell">
       <label class="yellow">Barrel Production No</label>
+      ${bpBatch}
       <div class="serial-row">
         <input type="text" id="inp-barrel-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
         <img class="serial-thumb" id="thumb-inp-barrel-prod-no">
@@ -644,12 +640,14 @@ function buildIdentityGrid() {
         <button class="cam-btn" onclick="captureSerial('inp-hfm-serial','photo_hfm', false)">📷</button>
       </div>
     </div>
-    <div class="card-cell"></div>
-    ${hfmProdRow}`;
+    <div class="card-cell"></div>`;
   // v1.32: HRC Serial No from the Rear Assy list (rearassy.js)
   if (typeof refreshCardRearAssy === 'function') setTimeout(refreshCardRearAssy, 150);
   // v1.42: XRGL40 Sight Serial No from the approved sights (sightpick.js)
   if (typeof refreshCardSight === 'function') setTimeout(refreshCardSight, 150);
+  // v1.47: the Barrel Production No batch list — here too, because a brand
+  // new card goes straight to the Identity screen without refreshIdentity()
+  if (typeof refreshBarrelBatches === 'function') setTimeout(refreshBarrelBatches, 150);
 }
 
 // ─── IDENTITY SAVE/RESTORE ────────────────────────────────────────────────────
@@ -663,7 +661,8 @@ function getIdentityMap() {
     'inp-hfm-serial':'hfm_serial_no','inp-firing-mech':'firing_mech_no',
   };
   if (state.cardType==='XRGL40'||state.cardType==='GRN40') base['inp-sight-serial']='sight_serial';
-  if (state.cardType==='XRGL40') { base['inp-hfm-prod-no']='hfm_prod_no'; base['inp-hrc-prod-no']='hrc_prod_no'; }
+  // v1.47: hfm_prod_no / hrc_prod_no are no longer on the XRGL40 card, so they
+  // are no longer read from it or written back. What is already stored stays.
   return base;
 }
 
@@ -697,6 +696,8 @@ function refreshIdentity() {
   if (typeof refreshCardRearAssy === 'function') setTimeout(refreshCardRearAssy, 150);
   // v1.42: XRGL40 sight from the approved list — after the boxes are filled
   if (typeof refreshCardSight === 'function') setTimeout(refreshCardSight, 150);
+  // v1.47: the Barrel Production No batch list
+  if (typeof refreshBarrelBatches === 'function') setTimeout(refreshBarrelBatches, 150);
 }
 
 function resetSerialConfirm() {
@@ -2751,6 +2752,44 @@ function normaliseSerial(raw, cardType) {
 }
 
 // v1.43: the GRN40 sight box starts with GRN- — the operator types the number
+// ─── v1.47 — Barrel Production No batches (XRGL40) ──────────────────────────
+async function _loadBarrelBatches() {
+  // read fresh each time a card is opened — it is one small row, and a batch
+  // added in the database must show up without waiting for a release
+  try {
+    const { data } = await supabaseClient.from('app_settings')
+      .select('value').eq('key', 'xrgl40_barrel_batches').limit(1);
+    const raw = (data && data.length) ? String(data[0].value || '') : '';
+    return raw.split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+  } catch (e) {
+    console.warn('[Barrel batch] could not read the list', e);
+    return null;                  // not read — the box is simply typed in
+  }
+}
+
+async function refreshBarrelBatches() {
+  const sel = document.getElementById('inp-barrel-prod-batch');
+  if (!sel) return;
+  const list = await _loadBarrelBatches();
+  const cur = document.getElementById('inp-barrel-prod-no');
+  if (!list || !list.length) { sel.style.display = 'none'; return; }
+  sel.style.display = '';
+  sel.innerHTML = '<option value="">— Pick the batch —</option>'
+    + list.map(b => `<option value="${b}">${b}</option>`).join('')
+    + '<option value="__other">Other — type it below</option>';
+  // a card already carrying one of the batches opens with it shown
+  if (cur && cur.value && list.indexOf(cur.value.trim()) >= 0) sel.value = cur.value.trim();
+}
+
+function pickBarrelBatch(sel) {
+  const inp = document.getElementById('inp-barrel-prod-no');
+  if (!inp || !sel) return;
+  if (sel.value === '__other') { inp.value = ''; inp.focus(); return; }
+  if (!sel.value) return;
+  inp.value = sel.value;
+  if (typeof scheduleAutoSave === 'function') scheduleAutoSave();
+}
+
 // v1.45: the launcher box on an XRGL40 starts with "X26 " — the operator
 // types only the number. Blank again on leaving if nothing was typed.
 function _x26PrefixFocus(inp) {
