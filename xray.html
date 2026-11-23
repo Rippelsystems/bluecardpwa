@@ -7,11 +7,13 @@
 <title>X-Ray Reports — Rippel Matrix</title>
 <link rel="manifest" href="manifest.json">
 <!-- ─────────────────────────────────────────────────────────────────────────
-  xray.html — X-RAY REPORTS on the floor tablet   (v1.2, 23 Nov 2026)
+  xray.html — X-RAY REPORTS on the floor tablet   (v1.3, 23 Nov 2026)
   v1.1: the angle LETTER (A B C D) is shown above each mark, so the operator
         sees WHICH angle failed. Feeds the angle-failure statistics.
   v1.2: HFM- / HRC- shown fixed in front of the serial box (TREE 4 = Housing
         Front Main, TREE 5 = Rear Cross) so only the number is typed.
+  v1.3: the prefix and the box are now the same height, same size and same
+        weight — they read as one control instead of a stepped join.
 
   Gammex radiograph every casting on a tree and send back FORM EL060. Each
   casting is shot from FOUR ANGLES, A B C D. A casting that fails even ONE
@@ -146,15 +148,21 @@
   .cast .ang b{ font-size:17px; font-weight:800; line-height:1.15; }
   .cast .ang.f i{ color:var(--red); }        /* the angle that failed */
   .cast .ok{ color:var(--green); } .cast .no-go{ color:var(--red); }
-  .cast .grow{ flex:1; min-width:0; display:flex; align-items:center; gap:0; }
+  /* align-items:stretch is what makes the prefix exactly as tall as the box —
+     v1.2 had them centred, so the shorter prefix left a step in the join. */
+  .cast .grow{ flex:1; min-width:0; display:flex; align-items:stretch; gap:0; }
   /* 23/11/2026 (Gerhard): TREE 4- is a Housing Front Main (HFM-), TREE 5- a
      Rear Cross (HRC-). The prefix is fixed in front so only the number is
-     typed. What is SAVED is the number alone. */
-  .cast .pre{ flex:0 0 auto; font-size:19px; font-weight:800; letter-spacing:1px;
-    color:var(--muted); padding:12px 2px 12px 10px; border:2px solid var(--border);
-    border-right:none; border-radius:10px 0 0 10px; background:#F7F9FC; }
+     typed. What is SAVED is the number alone.
+     v1.3: same font size, same weight and the same vertical padding as the box
+     it joins, so the two read as ONE control rather than two. */
+  .cast .pre{ flex:0 0 auto; display:flex; align-items:center;
+    font-size:20px; font-weight:700; letter-spacing:1px;
+    color:var(--muted); padding:12px 4px 12px 14px;
+    border:2px solid var(--border); border-right:none;
+    border-radius:10px 0 0 10px; background:#fff; }
   .cast.bad .pre{ border-color:var(--red); color:var(--red); }
-  .cast .pre + input{ border-radius:0 10px 10px 0; border-left:none; }
+  .cast .pre + input{ border-radius:0 10px 10px 0; border-left:none; padding-left:4px; }
   .cast input{ width:100%; font-size:20px; font-weight:700; padding:12px 14px;
     border:2px solid var(--border); border-radius:10px; letter-spacing:1px;
     background:#fff; color:var(--text); }
@@ -184,7 +192,7 @@
 "use strict";
 // ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
 // LIVE only — the Blue Card has no TEST database.
-const XR_VERSION = "1.2";
+const XR_VERSION = "1.3";
 const CALL_TIMEOUT = window.__xrTimeout || 20000;
 const IDLE_MINUTES = 10;
 const db = window.__xrDb || window.supabase.createClient(
