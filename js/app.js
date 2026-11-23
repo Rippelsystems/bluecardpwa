@@ -413,11 +413,13 @@ async function cancelBuildCard() {
 }
 
 function endSession() {
+  _releaseTrolley();                 // v1.48: never leave a trolley held
   state.operator=null; state.buildId=null; state.formData={}; state.checks={}; state._dirtyChecks={}; state._idBase=null;
   show('screen-login');
 }
 
 function changeCardType() {
+  _releaseTrolley();                 // v1.48: never leave a trolley held
   // Go back to login screen to pick a different card type or operator
   state.operator=null; state.buildId=null; state.formData={}; state.checks={}; state._dirtyChecks={}; state._idBase=null;
   state.serialVerified=false;
@@ -1531,13 +1533,48 @@ function populateTrolley() {
   for(let i=1;i<=20;i++) tSel.innerHTML+=`<option value="${i}">Trolley ${i}</option>`;
   const pSel=document.getElementById('inp-trolley-pos');
   if(pSel){pSel.innerHTML='<option value="">— Select —</option>';for(let i=1;i<=56;i++) pSel.innerHTML+=`<option value="${i}">Pos ${i}</option>`;}
-  if(!state.buildId) autoSuggestTrolley();
+  if(!state.buildId) autoSuggestTrolley(); else _markTrolleysInUse();
 }
 
+// v1.48: the place comes from the database — bc_next_free_trolley() carries on
+// with the trolley being filled FOR THIS CARD TYPE, skips any trolley somebody
+// else is holding, and moves up when one is full. The old version took the last
+// created card of ANY type and added 1, which is how three tablets were handed
+// the same place and how an XRGL40 card inherited an RLL position.
 async function autoSuggestTrolley() {
+  const tn = document.getElementById('inp-trolley-no');
+  const tp = document.getElementById('inp-trolley-pos');
+  try {
+    const { data, error } = await supabaseClient.rpc('bc_next_free_trolley',
+      { p_card_type: state.cardType, p_operator: state.operator || null });
+    if (error) {
+      if (_isMissingFn(error)) { _claimFnMissing = true; return _autoSuggestTrolleyOld(); }
+      throw error;
+    }
+    if (!data || !data.ok) {
+      showToast('⚠ ' + ((data && data.error) || 'No free trolley position'), 'warn');
+      return;
+    }
+    if (tn) tn.value = String(data.trolley);
+    if (tp) tp.value = String(data.position);
+    state.formData.trolley_number = String(data.trolley);
+    state.formData.trolley_position = String(data.position);
+    await _claimTrolley(data.trolley);
+    _markTrolleysInUse();
+  } catch (e) {
+    console.warn('[Trolley] next place failed — falling back', e);
+    return _autoSuggestTrolleyOld();
+  }
+}
+
+// the v1.47 guess, kept only for a tablet whose database has not had
+// trolley_claim_23Nov.sql / trolley_next_place_v2_23Nov.sql run on it yet
+async function _autoSuggestTrolleyOld() {
   try {
     const {data}=await supabaseClient.from('weapon_builds')
-      .select('trolley_number,trolley_position').not('trolley_number','is',null)
+      .select('trolley_number,trolley_position')
+      .eq('card_type', state.cardType)                 // v1.48: at least scope it
+      .not('trolley_number','is',null)
       .order('created_at',{ascending:false}).limit(1);
     let t=1,p=1;
     if(data&&data.length>0&&data[0].trolley_number){t=data[0].trolley_number;p=(data[0].trolley_position||0)+1;if(p>56){t++;p=1;}if(t>20)t=20;}
@@ -1547,15 +1584,121 @@ async function autoSuggestTrolley() {
   } catch(e){}
 }
 
-function handleTrolleyChange() {
+async function handleTrolleyChange() {
   // v1.37 (14/11/2026): a gun that already has a place may only be moved with
   // the Admin PIN — asked here, before anything else happens
   if (_hasSavedPlace()) { checkTrolleyPositionCollision(true); return; }
+  // v1.48: picking a trolley by hand claims it, the same as being given one.
+  // If somebody else has it the operator is told by whom and moved on.
+  const picked = document.getElementById('inp-trolley-no')?.value;
+  if (picked && String(picked) !== String(_trolleyClaim && _trolleyClaim.trolley)) {
+    await _releaseTrolley();
+    const got = await _claimTrolley(picked);
+    _markTrolleysInUse();
+    if (!got) return;                      // the toast said who has it
+  }
   // a new card: no position until one is picked (it used to jump to Pos 1,
   // which is usually already taken)
   const tp=document.getElementById('inp-trolley-pos'); if(tp) tp.value='';
   state.formData.trolley_position = null;
   scheduleAutoSave();
+}
+
+// ─── TROLLEY CLAIM (v1.48, 23/11/2026) ────────────────────────────────────────
+// Floor 23/11/2026 (Gerhard): "if 3 pads are working they save over each
+// other's work — it does open a trolley number when somebody else has it open
+// as well. As soon as a trolley has been opened by an operator it needs to say
+// it is in use by whom, and the next number must become available."
+//
+// WHY v1.37 DID NOT COVER IT
+//   _createBuildRow() refuses to create a card with no serial, so UNTIL THE
+//   SERIAL IS SAVED THE CARD DOES NOT EXIST IN THE DATABASE. Its trolley and
+//   position live only on that tablet. checkTrolleyPositionCollision() looks in
+//   weapon_builds, finds nothing — the other tablets have written no row either
+//   — and lets it through. Three men can all be on Trolley 12 / Pos 14 and none
+//   can see the other two. LIVE showed 25 pairs of cards started on the same
+//   trolley by different operators inside two minutes.
+//   And autoSuggestTrolley() took "the last created card + 1" WITHOUT FILTERING
+//   BY CARD TYPE, so an XRGL40 card could inherit a position from an RLL one.
+//
+// THE CLAIM EXISTS BEFORE THE CARD DOES — trolley_claims, written the moment a
+// place is taken on screen (trolley_claim_23Nov.sql + trolley_next_place_v2).
+// If the SQL is not loaded the tablet behaves exactly as v1.47 did.
+let _trolleyClaim = null;        // { card_type, trolley, until } held by this tablet
+let _claimFnMissing = false;     // the claim SQL is not on this database
+
+// hand back whatever this tablet is holding
+async function _releaseTrolley() {
+  const c = _trolleyClaim;
+  _trolleyClaim = null;
+  if (!c || _claimFnMissing || !state.operator) return;
+  try {
+    await supabaseClient.rpc('bc_trolley_release', {
+      p_card_type: c.card_type, p_trolley: c.trolley, p_operator: state.operator });
+  } catch (e) { console.warn('[TrolleyClaim] release failed', e); }
+}
+
+// claim a trolley for this operator. true = it is ours to work on.
+// false = somebody else has it; the boxes have been moved to the next free one.
+async function _claimTrolley(trolley) {
+  if (_claimFnMissing || !state.operator || !trolley) return true;
+  try {
+    const { data, error } = await supabaseClient.rpc('bc_trolley_claim', {
+      p_card_type: state.cardType, p_trolley: parseInt(trolley, 10),
+      p_operator: state.operator, p_minutes: 90,
+      p_build_id: state.buildId || null });
+    if (error) {
+      if (_isMissingFn(error)) { _claimFnMissing = true; return true; }   // SQL not loaded
+      console.warn('[TrolleyClaim]', error);
+      return true;                      // never block the floor on a claim error
+    }
+    if (data && data.ok) {
+      _trolleyClaim = { card_type: state.cardType, trolley: parseInt(trolley, 10),
+                        until: data.until };
+      return true;
+    }
+    // somebody else has it — say who, and move to the next free trolley
+    const who = (data && data.in_use_by) || '?';
+    const next = (data && data.next) || null;
+    if (next && next.ok) {
+      const tn = document.getElementById('inp-trolley-no');
+      const tp = document.getElementById('inp-trolley-pos');
+      if (tn) tn.value = String(next.trolley);
+      if (tp) tp.value = String(next.position);
+      state.formData.trolley_number = String(next.trolley);
+      state.formData.trolley_position = String(next.position);
+      showToast(`🔒 Trolley ${trolley} is in use by OP ${who} — moved you to `
+                + `Trolley ${next.trolley} / Pos ${next.position}`, 'warn');
+      // claim the one we were just moved to
+      return await _claimTrolley(next.trolley);
+    }
+    showToast(`🔒 Trolley ${trolley} is in use by OP ${who}`
+              + ((data && data.error) ? '' : ''), 'error');
+    return false;
+  } catch (e) {
+    console.warn('[TrolleyClaim] claim failed', e);
+    return true;                        // never block the floor
+  }
+}
+
+// who is on what, for the Trolley No dropdown
+async function _markTrolleysInUse() {
+  if (_claimFnMissing || !state.cardType) return;
+  const tSel = document.getElementById('inp-trolley-no');
+  if (!tSel) return;
+  try {
+    const { data, error } = await supabaseClient.rpc('bc_trolley_state',
+      { p_card_type: state.cardType });
+    if (error) { if (_isMissingFn(error)) _claimFnMissing = true; return; }
+    (data || []).forEach(row => {
+      const opt = [...tSel.options].find(o => o.value === String(row.trolley));
+      if (!opt) return;
+      const mine = row.in_use_by && row.in_use_by === state.operator;
+      opt.textContent = `Trolley ${row.trolley}`
+        + (row.in_use_by ? (mine ? '  — you' : `  — IN USE by OP ${row.in_use_by}`) : '')
+        + (row.next_free === null ? '  (full)' : '');
+    });
+  } catch (e) { /* the dropdown just stays plain */ }
 }
 
 // ─── TROLLEY / POSITION GATE (v1.37, 14/11/2026) ──────────────────────────────
