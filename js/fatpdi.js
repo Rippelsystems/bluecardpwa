@@ -781,8 +781,9 @@ const _FP_REQUIRED_FIELDS = {
         ['trolley_number','Trolley'],['trolley_position','Position'],['launcher_serial','Launcher serial'],
         ['sight_serial','Sight serial'],['barrel_no','Barrel no'],['barrel_production_no','Barrel prod no'],
         ['cylinder_no','Cylinder no'],['cylinder_production_no','Cylinder prod no'],['hrc_serial_no','HRC serial'],
-        ['hrc_prod_no','HRC prod no'],['firing_mech_no','Firing mech no'],['hfm_serial_no','HFM serial'],
-        ['hfm_prod_no','HFM prod no']],
+        ['firing_mech_no','Firing mech no'],['hfm_serial_no','HFM serial']],
+        // v1.47 (23/11/2026): HRC prod no and HFM prod no came off the XRGL40
+        // card, so they are no longer asked for at the Final Approval Sign-Off.
   GRN40: [['contract_name','Contract'],['client_country','Country'],['year_of_manufacture','Year'],
         ['sight_serial','Sight serial']],
 };
