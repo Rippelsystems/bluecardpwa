@@ -7,7 +7,17 @@
 <title>Rippel Matrix — Tablet Menu</title>
 <link rel="manifest" href="manifest.json">
 <!-- ─────────────────────────────────────────────────────────────────────────
-  menu.html — front page on the tablets (v1.3, 23 Nov 2026)
+  menu.html — front page on the tablets (v1.5, 23 Nov 2026)
+  v1.5: index.html bumped to v1.49 in PAGEV (the trolley place-claim
+        fix). Replaces v1.4, which pointed at v1.48 — do not load that one.
+  v1.4: PAGE VERSIONS ON THE TILE LINKS. The tiles used to link to the pages
+        with a plain address, so once a tablet had loaded a page the browser
+        kept re-using its own copy and a new page never arrived — the storeman
+        sees the old screen and thinks nothing was loaded. Every tile link now
+        carries ?v=<page version> from the PAGEV list below, the same way the
+        js files already carry ?v=. WHEN A PAGE IS CHANGED, BUMP ITS NUMBER IN
+        PAGEV AND LOAD THIS FILE TOO — that is what makes the tablets fetch it.
+        Tiles, wording, colours and the TEST handling are unchanged.
   v1.1: logo block removed (white box looked cramped) — title text only.
   v1.2: tile 3 Component Count → count.html (camera count: receiving count
         aid + stock take). Tiles 1 and 2 unchanged.
@@ -87,7 +97,7 @@
 </head>
 <body>
 <div class="wrap">
-  <span class="file">menu.html v1.3</span>
+  <span class="file">menu.html v1.5</span>
   <div class="test" id="testbar" hidden>⚠ TEST MODE — Goods Receiving and Component Count use the TEST database</div>
   <div class="brand">RIPPEL EFFECT SYSTEMS</div>
   <h1>RIPPEL <span>MATRIX</span></h1>
@@ -107,7 +117,7 @@
     <a class="tile t3" href="count.html" id="go-count">
       <div class="num">3</div>
       <div><div class="name">Component Count</div>
-        <div class="what">Count parts with the camera — receiving count or stock take</div></div>
+        <div class="what">Count parts with the camera or type the quantity — receiving count or stock take</div></div>
     </a>
     <a class="tile t4" href="xray.html" id="go-xray">
       <div class="num">4</div>
@@ -124,12 +134,25 @@
 <script src="js/sitegate.js?v=1.22"></script>
 <script>
   (function () {
-    // carry ?env=test through to Goods Receiving and Component Count (Blue Card is LIVE only)
-    if (/(^|[?&])env=test(&|$)/i.test(location.search)) {
-      document.getElementById('go-receiving').href = 'receiving.html?env=test';
-      document.getElementById('go-count').href = 'count.html?env=test';
-      document.getElementById('testbar').hidden = false;
-    }
+    // ── WHICH VERSION OF EACH PAGE THE TABLETS SHOULD FETCH ──────────────────
+    // Without this the browser keeps serving its own copy of a page and a new
+    // one never arrives. BUMP THE NUMBER OF ANY PAGE YOU CHANGE, and load this
+    // menu.html with it — the tablet then fetches that page fresh, once.
+    var PAGEV = {
+      'go-bluecard':  { page: 'index.html',     v: '1.49', test: false },
+      'go-receiving': { page: 'receiving.html', v: '1.3',  test: true  },
+      'go-count':     { page: 'count.html',     v: '1.2',  test: true  },
+      'go-xray':      { page: 'xray.html',      v: '1.4',  test: false }
+    };
+    // carry ?env=test through to Goods Receiving and Component Count (Blue Card
+    // and the X-Ray page are LIVE only)
+    var isTest = /(^|[?&])env=test(&|$)/i.test(location.search);
+    Object.keys(PAGEV).forEach(function (id) {
+      var el = document.getElementById(id); if (!el) return;
+      var p = PAGEV[id];
+      el.href = p.page + '?v=' + p.v + ((isTest && p.test) ? '&env=test' : '');
+    });
+    if (isTest) document.getElementById('testbar').hidden = false;
   })();
 </script>
 </body>
