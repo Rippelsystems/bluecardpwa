@@ -5,7 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Rippel Matrix — Component Count</title>
 <!-- ─────────────────────────────────────────────────────────────────────────
-  count.html — Component Count on the tablet (v1.2, 23 Nov 2026)
+  count.html — Component Count on the tablet (v1.3, 24 Nov 2026)
+  v1.3: THE IDLE LOGOUT WAS THROWING AWAY A COUNT IN HAND. Five minutes
+        without touching the tablet logged the storeman out and wiped the
+        job (logout() sets job: null), so he came back from counting a bin
+        to the name list with nothing saved. It never bit with the camera —
+        there you lay the parts out, tap Count, tap Save, touching the
+        tablet throughout. Counting BY HAND means not touching it for
+        minutes, which is the whole point of Type mode added in v1.2. On
+        24/11/2026 not one typed count reached the database because of it.
+        Two clocks now: 5 minutes while browsing the lists (unchanged, that
+        is what it was for), 45 minutes while a count is actually open. The
+        clock is also re-armed on every screen change — before, it kept
+        whatever the last tap gave it, and the tap that opens a count
+        happens on the parts list, so a count in hand ran on the short one.
   v1.2: MANUAL COUNT + CAMERA SWITCH. The camera is no longer the only way
         in. "How the count is entered" on the Home screen switches between
         📷 Camera counts it  and  ⌨ Type the quantity in. The choice is
@@ -215,7 +228,7 @@
 // ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
 // LIVE = the Blue Card connection (js/supabase.js). ?env=test = TEST database
 // (same TEST connection as receiving.html).
-const CNT_VERSION = "1.2";
+const CNT_VERSION = "1.3";
 const CNT_TEST = /(^|[?&])env=test(&|$)/i.test(location.search);
 const CNT_TEST_URL = "https://wtkbsvopuvtxiprjtqqx.supabase.co";
 const CNT_TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0a2Jzdm9wdXZ0eGlwcmp0cXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTUzNjIsImV4cCI6MjA5NjE3MTM2Mn0.q3cRrSbgmgzaw9PzHEuXaic-3Cl-JAiAPVbZnyoY8SQ";
@@ -225,7 +238,14 @@ const db = window.__cntDb || window.supabase.createClient(
   { auth: { persistSession: false, autoRefreshToken: false, storageKey: "cnt-" + (CNT_TEST ? "test" : "live") } });
 
 const PHOTO_BUCKET = "stock-count-photos";
+// 24/11/2026: the idle logout threw away a count in hand. Five minutes is
+// right while somebody is browsing the lists on a shared tablet, but counting
+// a bin BY HAND means not touching the tablet for minutes at a time — which is
+// the whole point of Type mode. The storeman came back to the name list and
+// his count was gone. Two clocks now: the short one while browsing, a long one
+// while a count is actually open. See touch() below.
 const IDLE_MINUTES = 5;
+const IDLE_COUNTING_MINUTES = 45;
 const CALL_TIMEOUT = window.__cntTimeout || 20000;
 // Same stores / products as the Stock Count screen on the laptop (frm_stockview.StockCountView)
 const STORES = ["XRGL Store", "GRN40 Store", "RLL Store", "COTS Store", "RLL Legacy Store",
@@ -349,11 +369,22 @@ function shapeBadge(code, name) {
 }
 
 // idle logout (shared tablet)
+// 24/11/2026: a count in hand gets the long clock. A man counting 300 parts by
+// hand is not touching the tablet, and logging him out loses the count he is
+// standing there counting — which is what happened on 24/11, and why not one
+// typed count ever reached the database. The short clock still applies on the
+// name list, the home screen and the part lists, which is what it was for.
 let idleTimer = null;
+function _counting() {
+  return !!S.job && (S.screen === "manual" || S.screen === "camera");
+}
 function touch() {
   clearTimeout(idleTimer);
-  if (S.user && S.screen !== "saving")
-    idleTimer = setTimeout(() => logout("Logged out after " + IDLE_MINUTES + " minutes without use."), IDLE_MINUTES * 60000);
+  if (!S.user || S.screen === "saving") return;
+  const mins = _counting() ? IDLE_COUNTING_MINUTES : IDLE_MINUTES;
+  idleTimer = setTimeout(
+    () => logout("Logged out after " + mins + " minutes without use."),
+    mins * 60000);
 }
 ["pointerdown", "keydown"].forEach(e => document.addEventListener(e, touch, { passive: true }));
 function logout(msg) {
@@ -369,6 +400,11 @@ function render() {
   ({ names: rNames, pin: rPin, home: rHome, stores: rStores, items: rItems, recounts: rRecounts,
      pos: rPos, lines: rLines, camera: rCamera, manual: rManual,
      saving: rSaving, unsure: rUnsure, done: rDone })[S.screen]();
+  // 24/11/2026: re-arm the idle clock whenever the screen changes. Without
+  // this the clock keeps whatever it was given by the LAST tap — and the tap
+  // that opens a count happens on the parts list, so a count in hand was
+  // running on the 5-minute browsing clock and the man lost his work.
+  touch();
 }
 
 // 1. who is counting
