@@ -413,13 +413,13 @@ async function cancelBuildCard() {
 }
 
 function endSession() {
-  _releaseTrolley();                 // v1.48: never leave a trolley held
+  _releasePlace();                   // v1.49: never leave a place held
   state.operator=null; state.buildId=null; state.formData={}; state.checks={}; state._dirtyChecks={}; state._idBase=null;
   show('screen-login');
 }
 
 function changeCardType() {
-  _releaseTrolley();                 // v1.48: never leave a trolley held
+  _releasePlace();                   // v1.49: never leave a place held
   // Go back to login screen to pick a different card type or operator
   state.operator=null; state.buildId=null; state.formData={}; state.checks={}; state._dirtyChecks={}; state._idBase=null;
   state.serialVerified=false;
@@ -1559,7 +1559,7 @@ async function autoSuggestTrolley() {
     if (tp) tp.value = String(data.position);
     state.formData.trolley_number = String(data.trolley);
     state.formData.trolley_position = String(data.position);
-    await _claimTrolley(data.trolley);
+    await _claimPlace(data.trolley, data.position);   // v1.49: the PLACE, not the trolley
     _markTrolleysInUse();
   } catch (e) {
     console.warn('[Trolley] next place failed — falling back', e);
@@ -1588,15 +1588,12 @@ async function handleTrolleyChange() {
   // v1.37 (14/11/2026): a gun that already has a place may only be moved with
   // the Admin PIN — asked here, before anything else happens
   if (_hasSavedPlace()) { checkTrolleyPositionCollision(true); return; }
-  // v1.48: picking a trolley by hand claims it, the same as being given one.
-  // If somebody else has it the operator is told by whom and moved on.
-  const picked = document.getElementById('inp-trolley-no')?.value;
-  if (picked && String(picked) !== String(_trolleyClaim && _trolleyClaim.trolley)) {
-    await _releaseTrolley();
-    const got = await _claimTrolley(picked);
-    _markTrolleysInUse();
-    if (!got) return;                      // the toast said who has it
-  }
+  // v1.49: picking a trolley by hand claims NOTHING — a trolley is shared by
+  // several men. Whatever place this tablet was holding on the old trolley is
+  // let go, and the new place is claimed when the position is picked below
+  // (checkTrolleyPositionCollision).
+  await _releasePlace();
+  _markTrolleysInUse();
   // a new card: no position until one is picked (it used to jump to Pos 1,
   // which is usually already taken)
   const tp=document.getElementById('inp-trolley-pos'); if(tp) tp.value='';
@@ -1624,64 +1621,84 @@ async function handleTrolleyChange() {
 // THE CLAIM EXISTS BEFORE THE CARD DOES — trolley_claims, written the moment a
 // place is taken on screen (trolley_claim_23Nov.sql + trolley_next_place_v2).
 // If the SQL is not loaded the tablet behaves exactly as v1.47 did.
-let _trolleyClaim = null;        // { card_type, trolley, until } held by this tablet
+// ── v1.49, 23/11/2026 night: A PLACE IS CLAIMED, NOT A TROLLEY ──────────────
+// v1.48 locked the whole trolley to one operator. A trolley holds 56 guns and
+// several men fill the same trolley at once, so the first man to open a card
+// took all 56 places and everybody else was told "Trolley 4 is in use by
+// OP 019" and pushed onto an empty trolley. That stopped the XRGL40 floor on
+// 23/11. What was always meant was the thing Gerhard actually said — "THE SAME
+// SAVE ON THE SAME TROLLY POS OPENED" — one PLACE, not one trolley.
+let _trolleyClaim = null;        // { card_type, trolley, position, until }
 let _claimFnMissing = false;     // the claim SQL is not on this database
 
-// hand back whatever this tablet is holding
-async function _releaseTrolley() {
+// hand back the place this tablet is holding
+async function _releasePlace() {
   const c = _trolleyClaim;
   _trolleyClaim = null;
   if (!c || _claimFnMissing || !state.operator) return;
   try {
-    await supabaseClient.rpc('bc_trolley_release', {
-      p_card_type: c.card_type, p_trolley: c.trolley, p_operator: state.operator });
-  } catch (e) { console.warn('[TrolleyClaim] release failed', e); }
+    await supabaseClient.rpc('bc_place_release', {
+      p_card_type: c.card_type, p_trolley: c.trolley,
+      p_position: c.position, p_operator: state.operator });
+  } catch (e) { console.warn('[PlaceClaim] release failed', e); }
 }
 
-// claim a trolley for this operator. true = it is ours to work on.
-// false = somebody else has it; the boxes have been moved to the next free one.
-async function _claimTrolley(trolley) {
-  if (_claimFnMissing || !state.operator || !trolley) return true;
+// claim ONE place for this operator. true = it is ours to build on.
+// false = somebody is already on it; the boxes have been moved to the next one.
+async function _claimPlace(trolley, position, _hop) {
+  if (_claimFnMissing || !state.operator || !trolley || !position) return true;
+  // a hop limit, so a busy moment can never turn into an endless walk
+  const hop = (_hop || 0) + 1;
+  if (hop > 25) { showToast('⚠ Could not find a free place — pick one by hand', 'error'); return false; }
   try {
-    const { data, error } = await supabaseClient.rpc('bc_trolley_claim', {
+    const { data, error } = await supabaseClient.rpc('bc_place_claim', {
       p_card_type: state.cardType, p_trolley: parseInt(trolley, 10),
+      p_position: parseInt(position, 10),
       p_operator: state.operator, p_minutes: 90,
       p_build_id: state.buildId || null });
     if (error) {
       if (_isMissingFn(error)) { _claimFnMissing = true; return true; }   // SQL not loaded
-      console.warn('[TrolleyClaim]', error);
+      console.warn('[PlaceClaim]', error);
       return true;                      // never block the floor on a claim error
     }
     if (data && data.ok) {
       _trolleyClaim = { card_type: state.cardType, trolley: parseInt(trolley, 10),
-                        until: data.until };
+                        position: parseInt(position, 10), until: data.until };
       return true;
     }
-    // somebody else has it — say who, and move to the next free trolley
-    const who = (data && data.in_use_by) || '?';
+    // somebody is on that place — say who, and move to the next free one
+    const who = (data && data.in_use_by) || null;
     const next = (data && data.next) || null;
-    if (next && next.ok) {
+    // The whole PLACE must differ, trolley and position both. Comparing the
+    // position alone was wrong: Trolley 4 / Pos 1 taken, next free Trolley 5 /
+    // Pos 1 — same number, different place — and the man was told "taken" and
+    // left standing instead of being moved. Pos 1 of one trolley after another
+    // is exactly what a back-capture does.
+    const samePlace = next && String(next.trolley) === String(trolley)
+                           && String(next.position) === String(position);
+    if (next && next.ok && !samePlace) {
       const tn = document.getElementById('inp-trolley-no');
       const tp = document.getElementById('inp-trolley-pos');
       if (tn) tn.value = String(next.trolley);
       if (tp) tp.value = String(next.position);
       state.formData.trolley_number = String(next.trolley);
       state.formData.trolley_position = String(next.position);
-      showToast(`🔒 Trolley ${trolley} is in use by OP ${who} — moved you to `
-                + `Trolley ${next.trolley} / Pos ${next.position}`, 'warn');
-      // claim the one we were just moved to
-      return await _claimTrolley(next.trolley);
+      showToast((who ? `🔒 Trolley ${trolley} / Pos ${position} is being built by OP ${who}`
+                     : `🔒 Trolley ${trolley} / Pos ${position} already has a gun on it`)
+                + ` — moved you to Trolley ${next.trolley} / Pos ${next.position}`, 'warn');
+      return await _claimPlace(next.trolley, next.position, hop);
     }
-    showToast(`🔒 Trolley ${trolley} is in use by OP ${who}`
-              + ((data && data.error) ? '' : ''), 'error');
+    showToast('🔒 ' + ((data && data.error) || `Trolley ${trolley} / Pos ${position} is taken`), 'error');
     return false;
   } catch (e) {
-    console.warn('[TrolleyClaim] claim failed', e);
+    console.warn('[PlaceClaim] claim failed', e);
     return true;                        // never block the floor
   }
 }
 
-// who is on what, for the Trolley No dropdown
+// how full each trolley is, and how many men are on it, for the Trolley No
+// dropdown. v1.49: a trolley is NEVER shown as locked to one man — several men
+// share a trolley. It shows what is left and who is on it.
 async function _markTrolleysInUse() {
   if (_claimFnMissing || !state.cardType) return;
   const tSel = document.getElementById('inp-trolley-no');
@@ -1693,10 +1710,14 @@ async function _markTrolleysInUse() {
     (data || []).forEach(row => {
       const opt = [...tSel.options].find(o => o.value === String(row.trolley));
       if (!opt) return;
-      const mine = row.in_use_by && row.in_use_by === state.operator;
+      const places = row.on_places || {};
+      const mine = Object.keys(places).filter(k => places[k] === state.operator);
+      const men  = row.builders || 0;
       opt.textContent = `Trolley ${row.trolley}`
-        + (row.in_use_by ? (mine ? '  — you' : `  — IN USE by OP ${row.in_use_by}`) : '')
-        + (row.next_free === null ? '  (full)' : '');
+        + (row.next_free === null ? '  (full)'
+           : `  — next free Pos ${row.next_free}`)
+        + (men ? `  · ${men} building` : '')
+        + (mine.length ? `  · you on Pos ${mine.join(', ')}` : '');
     });
   } catch (e) { /* the dropdown just stays plain */ }
 }
@@ -1796,6 +1817,13 @@ async function checkTrolleyPositionCollision(moving) {
     const other = (data || []).find(r => r.id !== state.buildId &&
       String((state.cardType === 'GRN40' ? r.sight_serial : r.launcher_serial) || '').toUpperCase() !== mine);
     if (!other) {
+      // v1.49: no gun on this place — claim it for this man so the next tablet
+      // is sent past it instead of onto it. A gun that already has its place
+      // keeps it; only a card still being placed claims.
+      if (!_hasSavedPlace()) {
+        const got = await _claimPlace(t, p);
+        if (!got) return;                  // the toast said who is on it
+      }
       if (_hasSavedPlace() || state.buildId) scheduleAutoSave(400);
       return;
     }
