@@ -13,9 +13,209 @@ const state = {
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initSupabase();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  _bcDropServiceWorker();     // v1.50: see the note below — there is no sw.js now
   show('screen-login');
+  _bcWatchStart();            // v1.50: messages from Matrix, and new releases
 });
+
+// ═══ NO SERVICE WORKER (v1.50, 24/11/2026) ═══════════════════════════════════
+// sw.js came in with the very first commit on 05/08/2026 as part of the
+// standard "make it installable" recipe (manifest.json + icons + sw.js + this
+// register call). What it did was:
+//     caches.match(e.request).then(r => r || fetch(e.request))
+// cache-first, for ever, with no version and no clean-up. A tablet that ran it
+// would have been frozen on whatever index.html and app.js it cached the first
+// time, and NO amount of uploading would ever have changed them.
+//
+// It never ran. It registered '/sw.js' and cached '/index.html', '/js/app.js' —
+// paths for a site at the top of a domain, while the Blue Card lives under
+// /bluecardpwa/. So the file was never found, registration failed, and the
+// error went into a .catch(). manifest.json was corrected for the subfolder on
+// 25/10/2026 (start_url, scope); sw.js was missed in that same fix and has sat
+// there as a landmine ever since — correcting its path would have frozen every
+// tablet on the floor.
+//
+// sw.js is deleted from the repo. This clears up after it on any tablet that
+// somehow did register one: it unregisters only workers scoped to this app and
+// deletes only this app's own caches, so nothing else on
+// rippelsystems.github.io is touched.
+function _bcDropServiceWorker() {
+  try {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistrations) {
+      navigator.serviceWorker.getRegistrations().then(rs => {
+        (rs || []).forEach(r => {
+          const scope = String((r && r.scope) || '');
+          if (scope.indexOf('/bluecardpwa/') >= 0) { try { r.unregister(); } catch (e) {} }
+        });
+      }).catch(() => {});
+    }
+    if (window.caches && caches.keys) {
+      caches.keys().then(names => {
+        (names || []).forEach(n => {
+          if (/^bluecard/i.test(String(n))) { try { caches.delete(n); } catch (e) {} }
+        });
+      }).catch(() => {});
+    }
+  } catch (e) { /* an old browser without any of this — nothing to clear */ }
+}
+
+// ═══ MESSAGES FROM MATRIX, AND NOTICING A NEW RELEASE (v1.50, 24/11/2026) ════
+// Gerhard 24/11/2026: "is there a way to send a message from Matrix to the
+// tablet staff ... like a popup on all the tablets at the same time".
+//
+// Two things on one timer:
+//   1. a message typed on the laptop (BLUE CARD -> BC Tablet Message) comes up
+//      FULL SCREEN here until the operator taps OK, and the tap is recorded so
+//      the laptop can show who has seen it;
+//   2. the tablet compares its own version with the one the database says it
+//      should be running, and offers to load a new release itself. Nobody has
+//      to be told to log out and in again.
+//
+// A plain check every BC_WATCH_SECS is used rather than a live socket: tablets
+// roam between access points on the floor and a dropped socket silently misses
+// messages, while a check that fails simply succeeds on the next round.
+const BC_APP_VERSION = '1.50';          // keep in step with the index.html footer
+const BC_WATCH_SECS  = 25;
+let _bcWatchTimer = null;
+let _bcMsgShowing  = null;              // the message on screen right now
+let _bcWatchMissing = false;            // the message SQL is not on this database
+let _bcUpdateShown  = false;            // the update bar is already up
+
+function _bcDeviceName() {              // a steady name for this tablet
+  try {
+    let d = localStorage.getItem('bcDeviceName');
+    if (!d) {
+      d = 'TAB-' + Math.random().toString(36).slice(2, 6).toUpperCase();
+      localStorage.setItem('bcDeviceName', d);
+    }
+    return d;
+  } catch (e) { return 'TAB-?'; }
+}
+
+function _bcWatchStart() {
+  if (_bcWatchTimer) return;
+  _bcWatchTick();
+  _bcWatchTimer = setInterval(_bcWatchTick, BC_WATCH_SECS * 1000);
+}
+
+async function _bcWatchTick() {
+  if (_bcWatchMissing || typeof supabaseClient === 'undefined' || !supabaseClient) return;
+  await _bcCheckRelease();
+  await _bcCheckMessages();
+}
+
+// ── a new release ───────────────────────────────────────────────────────────
+async function _bcCheckRelease() {
+  if (_bcUpdateShown) return;
+  try {
+    const { data, error } = await supabaseClient.rpc('bc_release_version',
+      { p_page: 'index.html' });
+    if (error) { if (_isMissingFn(error)) _bcWatchMissing = true; return; }
+    if (!data || !data.ok || !data.version) return;
+    if (String(data.version) === String(BC_APP_VERSION)) return;
+    _bcUpdateShown = true;
+    _bcShowUpdateBar(String(data.version), data.note || '');
+  } catch (e) { /* next round */ }
+}
+
+function _bcShowUpdateBar(version, note) {
+  if (document.getElementById('bc-update-bar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'bc-update-bar';
+  bar.setAttribute('style',
+    'position:fixed;left:0;right:0;bottom:0;z-index:9998;background:#0D47A1;color:#fff;' +
+    'padding:14px 18px;display:flex;align-items:center;gap:14px;font-size:17px;' +
+    'font-weight:700;box-shadow:0 -3px 14px rgba(0,0,0,.3)');
+  const words = document.createElement('div');
+  words.setAttribute('style', 'flex:1;min-width:0');
+  words.textContent = '⬆ New version ' + version + ' is out'
+                      + (note ? ' — ' + note : '') + '. You are on ' + BC_APP_VERSION + '.';
+  const go = document.createElement('button');
+  go.textContent = 'Load it now';
+  go.setAttribute('style',
+    'flex:0 0 auto;border:none;border-radius:10px;padding:14px 20px;font-size:17px;' +
+    'font-weight:800;background:#FFFFFF;color:#0D47A1');
+  go.onclick = () => { try { location.reload(true); } catch (e) { location.reload(); } };
+  const later = document.createElement('button');
+  later.textContent = 'Later';
+  later.setAttribute('style',
+    'flex:0 0 auto;border:none;border-radius:10px;padding:14px 16px;font-size:15px;' +
+    'font-weight:700;background:rgba(255,255,255,.18);color:#fff');
+  later.onclick = () => { bar.remove(); };
+  bar.appendChild(words); bar.appendChild(go); bar.appendChild(later);
+  document.body.appendChild(bar);
+}
+
+// ── a message from the laptop ───────────────────────────────────────────────
+async function _bcCheckMessages() {
+  if (_bcMsgShowing || !state.operator) return;     // nobody logged in = nobody to record
+  try {
+    const { data, error } = await supabaseClient.rpc('bc_messages_for',
+      { p_card_type: state.cardType || null, p_operator: state.operator });
+    if (error) { if (_isMissingFn(error)) _bcWatchMissing = true; return; }
+    const list = Array.isArray(data) ? data : [];
+    if (!list.length) return;
+    _bcShowMessage(list[0]);                        // one at a time, oldest first
+  } catch (e) { /* next round */ }
+}
+
+function _bcShowMessage(msg) {
+  if (_bcMsgShowing) return;
+  _bcMsgShowing = msg;
+  const info = String(msg.level || 'IMPORTANT').toUpperCase() === 'INFO';
+  const wrap = document.createElement('div');
+  wrap.id = 'bc-msg-overlay';
+  wrap.setAttribute('style',
+    'position:fixed;inset:0;z-index:9999;background:rgba(10,22,40,.92);display:flex;' +
+    'align-items:center;justify-content:center;padding:24px');
+  const card = document.createElement('div');
+  card.setAttribute('style',
+    'background:#FFFFFF;border-radius:18px;max-width:640px;width:100%;max-height:90vh;' +
+    'overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.45)');
+  const head = document.createElement('div');
+  head.setAttribute('style',
+    'background:' + (info ? '#1565C0' : '#B71C1C') + ';color:#fff;padding:18px 22px;' +
+    'border-radius:18px 18px 0 0;font-size:22px;font-weight:800');
+  head.textContent = (info ? 'ℹ ' : '⚠ ') + (msg.title || 'Message');
+  const body = document.createElement('div');
+  body.setAttribute('style',
+    'padding:22px;font-size:19px;line-height:1.5;color:#1A2333;white-space:pre-wrap');
+  body.textContent = msg.body || '';
+  const from = document.createElement('div');
+  from.setAttribute('style', 'padding:0 22px 6px;font-size:14px;color:#6B7688');
+  from.textContent = 'From ' + (msg.sent_by || 'the office')
+                     + (msg.sent_at ? ' · ' + new Date(msg.sent_at).toLocaleString('en-ZA',
+                         { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+  const foot = document.createElement('div');
+  foot.setAttribute('style', 'padding:14px 22px 22px');
+  const ok = document.createElement('button');
+  ok.id = 'bc-msg-ok';
+  ok.textContent = 'OK — I have read this';
+  ok.setAttribute('style',
+    'width:100%;border:none;border-radius:12px;padding:18px;font-size:19px;' +
+    'font-weight:800;background:#1B5E20;color:#fff');
+  ok.onclick = () => _bcAckMessage(msg.id);
+  foot.appendChild(ok);
+  card.appendChild(head); card.appendChild(body); card.appendChild(from); card.appendChild(foot);
+  wrap.appendChild(card);
+  document.body.appendChild(wrap);
+}
+
+async function _bcAckMessage(id) {
+  const btn = document.getElementById('bc-msg-ok');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    await supabaseClient.rpc('bc_message_ack',
+      { p_id: id, p_operator: state.operator, p_device: _bcDeviceName() });
+  } catch (e) {
+    // the floor is never held up by a failed acknowledgement — it will be
+    // offered again on the next round and recorded then
+    console.warn('[Message] ack failed', e);
+  }
+  const ov = document.getElementById('bc-msg-overlay');
+  if (ov) ov.remove();
+  _bcMsgShowing = null;
+}
 
 // ─── ROUTING ──────────────────────────────────────────────────────────────────
 function show(screenId) {
