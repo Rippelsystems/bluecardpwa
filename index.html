@@ -93,7 +93,7 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:8px;font-size:13px;font-weight:700;color:#ffffff;letter-spacing:0.08em;text-align:center;font-family:monospace;">
-    v1.50 · 24 Nov 2026
+    v1.51 · 25 Nov 2026
   </div>
 
 </section>
@@ -252,6 +252,20 @@
 </section>
 
 <style>
+  /* ── v1.51 (25/11/2026): STOP THE SWIPE-DOWN THROWING THE MAN OUT ────────
+     On the floor, swiping down anywhere near the top of a screen pulled the
+     browser's own "pull to refresh" and RELOADED the page. A reload wipes
+     state — operator, card type, the build being worked on — so the man
+     landed back on the login screen and lost what he was doing. Swiping up
+     was always fine, because pull-to-refresh only fires on a downward pull
+     at the top. It was never the app's code: there is no touch or swipe
+     handler anywhere in app.js.
+     count.html, xray.html and receiving.html have carried this line since
+     they were written. index.html and menu.html never had it. Same rule,
+     word for word, so all five pages behave the same.
+     Normal scrolling inside the page is untouched.                        */
+  html, body { overscroll-behavior: none; }
+
   .fatpdi-table th, .fatpdi-table td { padding:6px 8px; border-bottom:1px solid var(--border,#1e3354); text-align:left; }
   .fatpdi-toggle { width:28px;height:28px;border-radius:6px;border:1px solid var(--border,#1e3354);
                    background:transparent;color:var(--text,#fff);font-weight:700;margin:0 2px;cursor:pointer; }
