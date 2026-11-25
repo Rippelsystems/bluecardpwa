@@ -7,7 +7,11 @@
 <title>Rippel Matrix — Tablet Menu</title>
 <link rel="manifest" href="manifest.json">
 <!-- ─────────────────────────────────────────────────────────────────────────
-  menu.html — front page on the tablets (v1.8, 25 Nov 2026)
+  menu.html — front page on the tablets (v1.9, 25 Nov 2026)
+  v1.9: index.html bumped to v1.53 in PAGEV — the CLIENT ACCEPTANCE RECORD
+        panel added under the Blue Card login, for a customer visit.
+        acceptance.html is a page of its own and carries its own ?v= on the
+        link, so it is not listed here.
   v1.8: index.html bumped to v1.52 in PAGEV — the Barrel Production No box
         now saves what is TYPED into it, not only what is picked from the
         batch list. Twenty XRGL40 cards had been left carrying the old
@@ -157,7 +161,7 @@
     // one never arrives. BUMP THE NUMBER OF ANY PAGE YOU CHANGE, and load this
     // menu.html with it — the tablet then fetches that page fresh, once.
     var PAGEV = {
-      'go-bluecard':  { page: 'index.html',     v: '1.52', test: false },
+      'go-bluecard':  { page: 'index.html',     v: '1.53', test: false },
       'go-receiving': { page: 'receiving.html', v: '1.3',  test: true  },
       'go-count':     { page: 'count.html',     v: '1.3',  test: true  },
       'go-xray':      { page: 'xray.html',      v: '1.4',  test: false }
