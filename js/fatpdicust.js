@@ -1183,8 +1183,18 @@ async function _fpRefreshFinal(reload) {
       return;
     }
 
-    const marked = Number((st && st.marked) || 0);
-    const fails  = Number((st && st.fails) || 0);
+    // 25/11/2026 — count what is ON THE SCREEN, not what is saved.
+    // _fpSet only writes to fatpdi.results; nothing reaches the database
+    // until Save is pressed. Counting st.marked meant the panel sat at
+    // "11 item(s) still to mark" with all 11 already marked, and the
+    // sign-off button never went live. The saved marks are read back into
+    // fatpdi.results when the unit is opened (see _caOpenDrawn), so this is
+    // the complete picture, and it is what the internal PDI has always done.
+    // signOffFromPdi still saves first and re-checks against the database
+    // before it signs anything, so nothing can be signed off unsaved.
+    const res    = fatpdi.results[us] || {};
+    const marked = items.filter(it => res[it.id] === 'PASS' || res[it.id] === 'FAIL').length;
+    const fails  = items.filter(it => res[it.id] === 'FAIL').length;
     const list = [
       { label: `Every item marked — ${marked} of ${items.length}`,
         ok: marked >= items.length,
