@@ -31,7 +31,7 @@
   screen for the Blue Card at a glance.
 ───────────────────────────────────────────────────────────────────────── -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="css/style.css?v=ca1.0">
+<link rel="stylesheet" href="css/style.css?v=ca1.1">
 <style>
   /* the client's screen is GREEN. Same shapes as the Blue Card so it is
      familiar, a different colour so it can never be confused with it. */
@@ -368,9 +368,17 @@
      display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="js/supabase.js?v=ca1.0"></script>
-<script src="js/fatpdi_config.js?v=ca1.0"></script>
+<script src="js/supabase.js?v=ca1.1"></script>
+<script src="js/fatpdi_config.js?v=ca1.1"></script>
 <script>
+// ── the connection ─────────────────────────────────────────────────────
+// 25/11/2026 — js/supabase.js declares supabaseClient as null and only
+// builds it when initSupabase() is called. app.js does that on startup for
+// the Blue Card; this page does not load app.js, so it has to do it itself.
+// Without this every call fails with "Cannot read properties of null
+// (reading 'rpc')" — which is exactly what happened on the first try.
+initSupabase();
+
 // ── the three globals the engine expects ───────────────────────────────
 var state = { operator: null, cardType: 'XRGL40', buildId: null,
               checks: {}, formData: {}, serialVerified: false };
@@ -505,6 +513,6 @@ async function caStartVisit() {
   }
 }
 </script>
-<script src="js/fatpdicust.js?v=ca1.0"></script>
+<script src="js/fatpdicust.js?v=ca1.1"></script>
 </body>
 </html>
