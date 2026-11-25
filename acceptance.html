@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0b3d1f">
+<title>Client Acceptance Record — Rippel Matrix</title>
+<link rel="manifest" href="manifest.json">
+<!-- ─────────────────────────────────────────────────────────────────────────
+  acceptance.html — CLIENT ACCEPTANCE RECORD          v1.0 · 25/11/2026
+
+  The customer's own acceptance test. The client draws a sample of guns off
+  the batch and runs the SAME PDI list we run — RES-QC-14 for XRGL40 — and
+  signs for what they find.
+
+  ⚠  THIS PAGE NEVER LOADS js/app.js AND NEVER LOADS js/fatpdi.js.
+     Those are the floor's own files and nothing here can reach them. This
+     page loads its own engine, js/fatpdicust.js, which writes to the
+     customer tables and has no code path to weapon_builds,
+     weapon_serials, weapon_pdi_results or weapon_fat_results.
+
+  WHAT IT DOES SHARE, DELIBERATELY:
+     js/supabase.js       the database connection. Read-only config.
+     js/fatpdi_config.js  THE CHECKLIST ITSELF. Shared on purpose: it is
+                          what guarantees the client tests the identical
+                          list we PDI with. Copy it and the two lists drift
+                          apart the first time anyone edits a check.
+     css/style.css        the look. Styling only — it cannot touch data.
+
+  GREEN, not navy, everywhere — so nobody on the floor can mistake this
+  screen for the Blue Card at a glance.
+───────────────────────────────────────────────────────────────────────── -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="css/style.css?v=ca1.0">
+<style>
+  /* the client's screen is GREEN. Same shapes as the Blue Card so it is
+     familiar, a different colour so it can never be confused with it. */
+  :root{
+    --bg:#07240f; --surface:#0d3a1b; --border:#1e5c33; --navy:#0b3d1f;
+    --accent:#3ddc84; --text:#ffffff; --text-dim:#9fd4b2;
+    --pass:#1a9e5c; --fail:#e03c3c; --warn:#e0a81a;
+  }
+  html, body{ margin:0; padding:0; min-height:100%; background:var(--bg);
+    color:var(--text); -webkit-tap-highlight-color:transparent;
+    /* same as count.html and index.html v1.52 — a swipe down must not
+       pull the browser's refresh and throw the client out mid-test */
+    overscroll-behavior:none; }
+  .ca-bar{ background:var(--navy); color:#fff; padding:12px 18px;
+    display:flex; align-items:center; gap:14px; position:sticky; top:0; z-index:10;
+    border-bottom:2px solid var(--accent); }
+  .ca-bar .ca-title{ flex:1; min-width:0; font-weight:800; letter-spacing:0.04em; }
+  .ca-bar .ca-sub{ font-size:11px; color:var(--text-dim); font-weight:600; }
+  .ca-chip{ background:var(--accent); color:#06250f; font-weight:800;
+    border-radius:20px; padding:4px 12px; font-size:12px; white-space:nowrap; }
+  .ca-wrap{ max-width:420px; margin:0 auto; padding:28px 20px; }
+  .ca-card{ background:var(--surface); border:1px solid var(--border);
+    border-radius:14px; padding:24px; box-shadow:0 16px 48px rgba(0,0,0,.5); }
+  .ca-note{ font-size:12px; color:var(--text-dim); line-height:1.5; }
+  .ca-file{ position:absolute; top:6px; right:10px; font-size:9px; color:#4d7d5e; }
+  /* the sign-off button is green on the Blue Card too — here it is the
+     client's own, so it says so */
+  .fp-signoff{ background:var(--pass) !important; }
+  .fatpdi-table th, .fatpdi-table td { padding:6px 8px; border-bottom:1px solid var(--border,#1e3354); text-align:left; }
+  .fatpdi-toggle { width:28px;height:28px;border-radius:6px;border:1px solid var(--border,#1e3354);
+                   background:transparent;color:var(--text,#fff);font-weight:700;margin:0 2px;cursor:pointer; }
+  .fatpdi-toggle.is-pass { background:#1a9e5c;border-color:#1a9e5c;color:#fff; }
+  .fatpdi-toggle.is-fail { background:#d93025;border-color:#d93025;color:#fff; }
+
+  /* ── v1.30 (11/11/2026): one unit at a time — FAT / PDI single-unit view ──
+     Same soft, raised look as the Checks page, in each stage's OWN colours so
+     nobody mistakes FAT or PDI for the build Checks. PASS still turns green
+     and FAIL red when selected.  FAT = soft blue · PDI = soft violet.        */
+  #screen-fatpdi { --fp-tint:#eef4fd; --fp-edge:#c5d8f3; --fp-ink:#24548f; --fp-shadow:#a9c4e8; --fp-band:#2f6fc0; }
+  #screen-fatpdi[data-fp-stage="PDI"] { --fp-tint:#f4f0fc; --fp-edge:#d8cbf1; --fp-ink:#5a3c97; --fp-shadow:#c4b1e6; --fp-band:#7650c0; }
+  #screen-fatpdi[data-fp-stage="FAT"] .card-badge { background:#2f6fc0; }
+  #screen-fatpdi[data-fp-stage="PDI"] .card-badge { background:#7650c0; }
+  .fp-list-row { cursor:pointer; }
+  .fp-list-row:hover td, .fp-list-row:active td { background:rgba(47,111,192,0.08); }
+  .fp-open { background:var(--fp-tint); color:var(--fp-ink); border:1px solid var(--fp-edge); border-radius:7px;
+             font-weight:800; font-size:12px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
+  .fp-prog { font-size:12px; font-weight:700; white-space:nowrap; }
+  /* v1.35: who did it / who has it open */
+  .fp-who  { font-size:10px; color:var(--text-dim,#8fa3c0); }
+  .fp-busy { font-size:10px; font-weight:800; color:#e08f1a; }
+  .fp-saved { font-size:10.5px; font-weight:600; color:#5b6b80; }
+  .fp-band { background:var(--fp-band); color:#fff; border-radius:10px; padding:10px 14px; margin-bottom:12px; }
+  .fp-band .fp-stage { font-size:11px; font-weight:800; letter-spacing:0.08em; opacity:0.9; }
+  .fp-band .fp-serial { font-family:var(--font-mono,monospace); font-size:22px; font-weight:800; margin-top:2px; }
+  .fp-band .fp-meta { font-size:12px; opacity:0.9; margin-top:2px; }
+  .fp-row { background:var(--fp-tint); border:1px solid var(--fp-edge); border-radius:10px; padding:12px 13px;
+            margin-bottom:10px; box-shadow:0 2px 4px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04); transition:box-shadow 0.15s; }
+  .fp-row[data-result="PASS"] { border-color:var(--pass,#1a9e5c); background:#f0faf5; box-shadow:0 2px 8px rgba(26,158,92,0.15); }
+  .fp-row[data-result="FAIL"] { border-color:var(--fail,#d93025); background:#fdf2f2; box-shadow:0 2px 8px rgba(217,48,37,0.15); }
+  .fp-label { display:block; font-size:13px; color:var(--text); margin-bottom:10px; line-height:1.4; }
+  .fp-label .fp-no { color:var(--fp-ink); font-weight:800; margin-right:6px; }
+  .fp-btns { display:flex; gap:8px; }
+  .fp-btn { flex:1; padding:10px 4px; border:none; border-radius:8px; font-size:12px; font-weight:800; letter-spacing:0.06em;
+            cursor:pointer; transition:transform 0.08s, box-shadow 0.08s; -webkit-tap-highlight-color:transparent;
+            background:linear-gradient(180deg, #ffffff 0%, var(--fp-tint) 100%); color:var(--fp-ink);
+            box-shadow:0 4px 0 var(--fp-shadow), 0 1px 3px rgba(0,0,0,0.1); }
+  .fp-btn.pass.selected { background:linear-gradient(180deg, #20c070 0%, #15a055 100%); color:#fff;
+            box-shadow:0 1px 0 #0a6a35, inset 0 2px 4px rgba(0,0,0,0.2); transform:translateY(3px); }
+  .fp-btn.fail.selected { background:linear-gradient(180deg, #e83030 0%, #c01818 100%); color:#fff;
+            box-shadow:0 1px 0 #800808, inset 0 2px 4px rgba(0,0,0,0.2); transform:translateY(3px); }
+  .fp-remarks { width:100%; min-height:64px; font-size:13px; }
+  .fp-actions .btn { margin-top:8px; }
+  .fp-save { background:var(--fp-band) !important; border-color:var(--fp-band) !important; }
+  /* v1.31: final sign-off on the PDI page */
+  .fp-final { border:1px solid var(--fp-edge); background:#fff; border-radius:10px; padding:12px 13px; margin:12px 0 4px; }
+  .fp-final h3 { margin:0 0 8px; font-size:13px; color:var(--fp-ink); letter-spacing:0.04em; }
+  .fp-final .fp-req { display:flex; gap:8px; font-size:12.5px; padding:3px 0; color:var(--text); }
+  .fp-final .fp-req .ok  { color:#1a9e5c; font-weight:800; width:18px; }
+  .fp-final .fp-req .no  { color:#d93025; font-weight:800; width:18px; }
+  .fp-final .fp-req .why { color:#8a2020; font-size:11.5px; }
+  .fp-signoff { width:100%; margin-top:10px; background:linear-gradient(180deg,#20c070 0%,#15a055 100%) !important;
+                border:none !important; color:#fff !important; font-weight:800; }
+  .fp-signoff:disabled { background:#d9dde5 !important; color:#7b8494 !important; cursor:not-allowed; animation:none !important; }
+  /* v1.44 (21/11/2026): the sign-off button blinks once it goes live — the
+     floor was walking away from a finished gun without pressing it */
+  .fp-signoff.fp-blink { animation:fpBlink 1.1s ease-in-out infinite; }
+  @keyframes fpBlink {
+    0%, 100% { box-shadow:0 0 0 0 rgba(32,192,112,0.55); filter:brightness(1); }
+    50%      { box-shadow:0 0 0 10px rgba(32,192,112,0); filter:brightness(1.22); }
+  }
+  /* v1.47 (23/11/2026): Barrel Production No — pick the batch (XRGL40) */
+  select.batch-pick { width:100%; margin-bottom:5px; padding:9px 8px; font-size:13px; font-weight:700;
+            border:2px solid #1565c0; border-radius:8px; background:#eef4fd; color:#14346b;
+            font-family:var(--font-ui); }
+  /* v1.44: the way back out of the sign-off panel */
+  .fp-backlink { width:100%; margin-top:9px; padding:11px 10px; font-size:13px; font-weight:700; cursor:pointer;
+                 border:1px solid var(--fp-edge); border-radius:8px; background:#ffffff; color:var(--fp-ink); }
+  /* v1.44: "ready for final approval" pop-up */
+  .fp-pop-wrap { position:fixed; inset:0; z-index:9000; display:flex; align-items:center; justify-content:center;
+                 background:rgba(8,20,36,0.62); padding:20px; overflow:auto; }
+  .fp-pop { width:100%; max-width:390px; background:#ffffff; border-radius:14px; padding:20px 18px 16px;
+            box-shadow:0 18px 50px rgba(0,0,0,0.45); text-align:center; }
+  .fp-pop-head   { font-size:14px; font-weight:800; letter-spacing:0.05em; color:#15803d; margin-bottom:8px; }
+  .fp-pop-serial { font-family:var(--font-mono,monospace); font-size:20px; font-weight:800; color:#1a2236; margin-bottom:10px; }
+  .fp-pop-txt    { font-size:13px; line-height:1.55; color:#30405a; margin-bottom:16px; }
+  .fp-pop-txt b  { color:#b3261e; }
+  .fp-pop-go     { width:100%; padding:14px 10px; font-size:14px; font-weight:800; cursor:pointer;
+                   border:none; border-radius:10px; color:#ffffff;
+                   background:linear-gradient(180deg,#20c070 0%,#15a055 100%); }
+  .fp-pop-later  { width:100%; margin-top:9px; padding:11px 10px; font-size:13px; font-weight:700; cursor:pointer;
+                   border:1px solid #d3d9e3; border-radius:10px; background:#ffffff; color:#4a5a73; }
+  /* v1.32 (12/11/2026): Rear Assy page + Rear Assy on the build card */
+  #screen-rearassy .card-badge { background:#5d4037; }
+  .ra-box { background:#fff; border:1px solid var(--border); border-radius:10px; padding:12px 13px; margin-bottom:14px; }
+  .ra-box.ra-editing { border-color:#e08f1a; box-shadow:0 0 0 2px rgba(224,143,26,0.18); }
+  .ra-box.ra-admin { border-color:#c62828; box-shadow:0 0 0 2px rgba(198,40,40,0.18); }
+  .ra-box h3 { margin:0 0 4px; font-size:13px; letter-spacing:0.05em; color:#5d4037; }
+  .ra-box.ra-admin h3 { color:#c62828; }
+  .ra-who { font-size:12px; color:var(--text-dim); margin-bottom:10px; }
+  .ra-field { margin-bottom:12px; }
+  .ra-field label { display:block; font-size:10px; font-weight:700; letter-spacing:0.07em; text-transform:uppercase; color:var(--yellow); margin-bottom:4px; }
+  .ra-field .serial-row input { font-family:var(--font-mono); font-size:18px; font-weight:700; padding:8px 4px;
+            border:none; border-bottom:2px solid var(--border); background:transparent; width:100%; }
+  .ra-field .serial-row input:focus { outline:none; border-bottom-color:var(--accent); }
+  .ra-prefix { font-family:var(--font-mono,monospace); font-weight:800; font-size:18px; color:var(--accent); white-space:nowrap; }
+  .ra-list-head { display:flex; align-items:center; gap:8px; margin:6px 0 8px; font-size:12px; font-weight:800; letter-spacing:0.06em; color:var(--label); }
+  .ra-list-head .ra-count { background:#5d4037; color:#fff; border-radius:10px; padding:1px 8px; font-size:11px; }
+  .ra-row { background:#fff; border:1px solid var(--border); border-left:4px solid #8d6e63; border-radius:8px; padding:9px 11px; margin-bottom:8px; }
+  .ra-row.on-gun { border-left-color:#1a9e5c; background:#f7fbf8; }
+  .ra-nums { display:flex; flex-wrap:wrap; gap:4px 16px; font-family:var(--font-mono); font-size:14px; }
+  .ra-meta { font-size:11.5px; color:var(--text-dim); margin-top:3px; }
+  .ra-acts { display:flex; gap:8px; margin-top:7px; }
+  .ra-btn { border:1px solid #c9b8b0; background:#f6efec; color:#5d4037; border-radius:7px; padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; }
+  .ra-btn.admin { border-color:#e6b4b4; background:#fdf0f0; color:#b71c1c; }
+  .ra-pick select { width:100%; font-size:13px; padding:7px 6px; border:1px solid #c9b8b0; border-radius:7px; background:#f6efec; color:#3e2723; font-weight:600; margin-bottom:6px; }
+  /* v1.36 (14/11/2026): search box above the Rear Assy pick list */
+  .card-cell .ra-pick input.ra-search { width:100%; box-sizing:border-box; font-size:14px; padding:8px 10px;
+            border:2px solid #8d6e63 !important; border-radius:18px !important; background:#ffffff !important;
+            color:#3e2723; font-family:var(--font-mono,monospace); font-weight:700; margin-bottom:6px; }
+  .card-cell .ra-pick input.ra-search::placeholder { color:#a1887f; font-weight:600; font-family:inherit; }
+  .ra-info { font-size:11.5px; color:#5d4037; margin-top:5px; line-height:1.5; }
+  .ra-link { background:none; border:none; color:var(--accent); font-weight:700; font-size:11.5px; cursor:pointer; padding:0 2px; text-decoration:underline; }
+  .ra-tag { align-items:center; white-space:nowrap; background:#5d4037; color:#fff; font-size:11px; font-weight:800;
+            border-radius:6px; padding:5px 8px; font-family:var(--font-mono,monospace); }
+  input.ra-locked { color:#3e2723 !important; background:#f6efec !important; }
+  /* v1.43: Home — switch card type (white text on the blue "on" button) */
+  .switch-type { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:12px; }
+  .switch-type-lbl { font-size:12px; font-weight:700; color:var(--text-dim,#5a6a85); margin-right:2px; }
+  .switch-type button { flex:1; min-width:90px; padding:10px 8px; font-size:13px; font-weight:700; cursor:pointer;
+            border:1px solid var(--border); border-radius:var(--radius,8px); background:var(--surface); color:var(--text); }
+  .switch-type button.on { background:var(--accent); border-color:var(--accent); color:#ffffff; cursor:default; opacity:1; }
+
+</style>
+</head>
+<body>
+<span class="ca-file" id="ca-file-label">acceptance.html</span>
+
+<!-- ═══ 1. LOGIN — our man logs in, then hands the tablet over ═══════════ -->
+<section id="screen-login" class="screen active">
+  <div class="ca-wrap">
+    <div style="text-align:center;margin-bottom:22px;">
+      <div style="font-size:26px;font-weight:800;letter-spacing:0.04em;">CLIENT ACCEPTANCE RECORD</div>
+      <div style="font-size:12px;color:var(--text-dim);letter-spacing:0.05em;margin-top:4px;">
+        Customer Acceptance Test &middot; Rippel Effect Systems</div>
+    </div>
+
+    <div class="ca-card">
+      <div class="field-group">
+        <label for="inp-operator" style="color:var(--text-dim);">Your Operator Number</label>
+        <input type="text" id="inp-operator" placeholder="e.g. 025" inputmode="numeric"
+               autocomplete="off" style="background:#f2f4f7;color:#111;">
+      </div>
+      <div class="field-group">
+        <label for="inp-operator-pin" style="color:var(--text-dim);">Your PIN</label>
+        <input type="password" id="inp-operator-pin" placeholder="Enter your PIN" inputmode="numeric"
+               maxlength="6" autocomplete="off"
+               style="width:100%;background:var(--surface);border:1px solid var(--border);
+                      border-radius:var(--radius);color:var(--text);font-family:var(--font-ui);
+                      font-size:15px;padding:11px 14px;outline:none;-webkit-appearance:none;">
+      </div>
+      <div id="login-error" style="display:none;color:#ff8080;font-size:12px;font-weight:600;
+           margin-bottom:10px;text-align:center;"></div>
+      <button class="btn btn-primary" id="btn-login" onclick="caLogin()"
+              style="margin-top:6px;background:var(--pass);border-color:var(--pass);">Start</button>
+      <button class="btn btn-secondary" onclick="window.location.href='menu.html'"
+              style="margin-top:10px;background:transparent;border-color:var(--border);color:var(--text-dim);">
+        &lsaquo; Main Menu</button>
+      <p class="ca-note" style="margin-top:16px;">
+        You log in, then hand the tablet to the client. Their name is asked for
+        at every signature &mdash; it is never assumed or remembered.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 2. THE VISIT — who is here, and what they are accepting ═════════ -->
+<section id="screen-visit" class="screen">
+  <div class="ca-bar">
+    <div class="ca-title">CLIENT ACCEPTANCE RECORD
+      <div class="ca-sub">Start the visit</div></div>
+    <span class="ca-chip">OP <span id="ca-op">&mdash;</span></span>
+  </div>
+  <div class="ca-wrap">
+    <div class="ca-card">
+      <div class="field-group">
+        <label for="inp-ca-contract" style="color:var(--text-dim);">Contract being accepted</label>
+        <select id="inp-ca-contract" style="font-size:15px;color:#111;background:#f2f4f7;"></select>
+      </div>
+      <div class="field-group">
+        <label for="inp-ca-cardtype" style="color:var(--text-dim);">Product</label>
+        <select id="inp-ca-cardtype" style="font-size:15px;color:#111;background:#f2f4f7;">
+          <option value="XRGL40">XRGL40</option>
+          <option value="RLL">RLL 37/38</option>
+          <option value="GRN40">GRN40</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label for="inp-ca-company" style="color:var(--text-dim);">Customer</label>
+        <input type="text" id="inp-ca-company" placeholder="e.g. Colombian MoD"
+               autocomplete="off" style="background:#f2f4f7;color:#111;">
+      </div>
+      <div class="field-group">
+        <label for="inp-ca-rep" style="color:var(--text-dim);">Their representative</label>
+        <input type="text" id="inp-ca-rep" placeholder="Who is here from the customer"
+               autocomplete="off" style="background:#f2f4f7;color:#111;">
+      </div>
+      <div id="visit-error" style="display:none;color:#ff8080;font-size:12px;font-weight:600;
+           margin-bottom:10px;text-align:center;"></div>
+      <button class="btn btn-primary" id="btn-ca-start" onclick="caStartVisit()"
+              style="margin-top:6px;background:var(--pass);border-color:var(--pass);">
+        Start the acceptance visit</button>
+      <button class="btn btn-secondary" onclick="caLogout()"
+              style="margin-top:10px;background:transparent;border-color:var(--border);color:var(--text-dim);">
+        Log out</button>
+      <p class="ca-note" style="margin-top:16px;">
+        The batch size is counted off the guns that have finished our PDI and
+        been signed off &mdash; it is not typed in. That is the number that goes
+        on the certificate, with however many the client draws from it.
+      </p>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══ 3. THE CHECKLIST — the SAME engine screen the floor uses ════════
+     Copied verbatim out of index.html so js/fatpdicust.js finds every
+     element it expects. The engine draws the gun list into it, with the
+     Draw tick box, and then the RES-QC-14 checklist one gun at a time.
+═══════════════════════════════════════════════════════════════════════ -->
+<section id="screen-ca-head" class="screen" style="display:none;"></section>
+<div id="ca-running-bar" class="ca-bar" style="display:none;">
+  <div class="ca-title">CLIENT ACCEPTANCE RECORD
+    <div class="ca-sub" id="ca-visit-line">&mdash;</div>
+    <div class="ca-sub" id="ca-batch-line">&mdash;</div>
+  </div>
+  <span class="ca-chip">OP <span id="ca-op2">&mdash;</span></span>
+</div>
+<section id="screen-fatpdi" class="screen">
+  <div class="topbar">
+    <span class="card-badge" id="fatpdi-stage-badge">FAT</span>
+    <span class="title" id="fatpdi-title">FAT — RLL 37/38</span>
+    <span class="operator-tag">OP <span id="fatpdi-op">—</span></span>
+  </div>
+  <div class="content">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div id="fatpdi-doc-footer" style="font-size:11px;color:var(--text-dim,#8fa3c0);font-family:monospace;"></div>
+      <button id="btn-fatpdi-admin-preview" onclick="requestAdminPreview()"
+              style="background:transparent;border:1px solid var(--border,#1e3354);color:#8fa3c0;
+                     font-size:11px;font-weight:700;padding:5px 10px;border-radius:6px;cursor:pointer;">🔒 Admin Preview</button>
+    </div>
+    <div id="fatpdi-preview-banner" style="display:none;background:#3a2a00;border:1px solid #e08f1a;color:#e08f1a;
+         font-size:12px;font-weight:700;padding:8px 10px;border-radius:6px;margin-bottom:10px;">
+      🔓 ADMIN PREVIEW — showing every gun, including those held back (checks not all COMPLETED / GO, or FAT not all PASS). Nothing entered here is saved as a real QC record.
+    </div>
+    <!-- v1.30 (11/11/2026): LIST of units — tap one to open it on its own -->
+    <div id="fatpdi-list-view">
+      <div class="section-head"><span class="section-num">1</span><h2 id="fatpdi-units-heading">Units Ready for Inspection</h2></div>
+
+      <!-- v1.33 (12/11/2026): Trolley No + Trolley Position drop-downs, the same
+           lists as the build card (Trolley 1–20, Pos 1–56) -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div class="field-group" style="margin:0;">
+          <label>Trolley No</label>
+          <select id="fatpdi-filter-trolley" style="font-size:13px;" onchange="_fatpdiApplyFilter()"></select>
+        </div>
+        <div class="field-group" style="margin:0;">
+          <label>Trolley Position</label>
+          <select id="fatpdi-filter-pos" style="font-size:13px;" onchange="_fatpdiApplyFilter()"></select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+        <div class="field-group" style="margin:0;">
+          <label>Contract</label>
+          <select id="fatpdi-filter-contract" style="font-size:13px;" onchange="_fatpdiApplyFilter()"></select>
+        </div>
+        <div class="field-group" style="margin:0;">
+          <label>Search Serial</label>
+          <input type="text" id="fatpdi-filter-search" placeholder="e.g. RLL 26004" autocapitalize="characters"
+                 spellcheck="false" style="font-size:13px;" onchange="_fatpdiApplyFilter()">
+        </div>
+      </div>
+
+      <!-- v1.35 (12/11/2026): read the list again — shows what other tablets did -->
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+        <button class="btn btn-secondary" id="btn-fatpdi-refresh" style="width:auto;padding:6px 14px;font-size:12px;margin:0;"
+                onclick="_fpRefreshList(this)">↻ Refresh list</button>
+      </div>
+      <div id="fatpdi-empty-msg" style="display:none;color:var(--text-dim,#8fa3c0);font-size:13px;padding:16px 0;"></div>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border,#1e3354);border-radius:8px;">
+        <table id="fatpdi-grid" class="fatpdi-table" style="border-collapse:collapse;width:100%;font-size:12px;"></table>
+      </div>
+      <div id="fatpdi-count-label" style="font-size:11px;color:var(--text-dim,#8fa3c0);margin:8px 0;"></div>
+      <button class="btn btn-secondary" id="btn-fatpdi-loadmore" style="display:none;" onclick="_fatpdiLoadMore()">Load 50 More</button>
+
+      <div class="divider"></div>
+      <button class="btn btn-primary" id="btn-fatpdi-save" onclick="saveFatPdi()">💾 Save All (loaded units only)</button>
+      <button class="btn btn-secondary" style="margin-top:8px;" onclick="goToResume()">← Back to Home</button>
+    </div>
+
+    <!-- v1.30: ONE unit at a time — vertical PASS / FAIL cards like Checks,
+         in the stage's own colours (FAT blue, PDI violet). Save → back to list. -->
+    <div id="fatpdi-unit-view" style="display:none;"></div>
+  </div>
+</section>
+
+
+<!-- ═══ 4. THE RUNTIME — the three things the engine needs from app.js ══
+     fatpdicust.js uses exactly three globals that normally come from
+     app.js: state, showToast and show. Rather than load the floor's whole
+     application onto the client's tablet, they are provided here, in
+     thirty lines, and nothing else of app.js comes with them.
+═══════════════════════════════════════════════════════════════════════ -->
+<div id="toast-host" style="position:fixed;left:0;right:0;bottom:18px;z-index:9999;
+     display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase.js?v=ca1.0"></script>
+<script src="js/fatpdi_config.js?v=ca1.0"></script>
+<script>
+// ── the three globals the engine expects ───────────────────────────────
+var state = { operator: null, cardType: 'XRGL40', buildId: null,
+              checks: {}, formData: {}, serialVerified: false };
+
+function show(id) {
+  document.querySelectorAll('.screen').forEach(function (s) {
+    s.classList.remove('active');
+  });
+  var el = document.getElementById(id);
+  if (el) el.classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+function showToast(msg, kind) {
+  var host = document.getElementById('toast-host');
+  if (!host) { console.log('[toast]', msg); return; }
+  var t = document.createElement('div');
+  var bg = kind === 'error' ? '#b3261e' : kind === 'warn' ? '#8a6100' : '#0f6b3a';
+  t.setAttribute('style',
+    'pointer-events:auto;max-width:92vw;background:' + bg + ';color:#fff;' +
+    'padding:12px 18px;border-radius:10px;font-size:15px;font-weight:700;' +
+    'box-shadow:0 8px 24px rgba(0,0,0,.45);');
+  t.textContent = msg;
+  host.appendChild(t);
+  setTimeout(function () { t.remove(); }, kind === 'error' ? 6000 : 3500);
+}
+
+// ── login ──────────────────────────────────────────────────────────────
+async function caLogin() {
+  var op  = (document.getElementById('inp-operator').value || '').trim();
+  var pin = (document.getElementById('inp-operator-pin').value || '').trim();
+  var err = document.getElementById('login-error');
+  var btn = document.getElementById('btn-login');
+  err.style.display = 'none';
+  if (!op || !pin) { err.textContent = 'Operator number and PIN'; err.style.display = 'block'; return; }
+  btn.disabled = true; btn.textContent = 'Checking...';
+  try {
+    // the same check the Blue Card uses — assemblers.operator_number + pin
+    var r = await supabaseClient.rpc('verify_operator_pin',
+              { p_operator_number: op, p_pin: pin });
+    if (r.error) throw r.error;
+    if (r.data !== true) {
+      err.textContent = 'Incorrect operator number or PIN';
+      err.style.display = 'block';
+      document.getElementById('inp-operator-pin').value = '';
+      return;
+    }
+    state.operator = op;
+    document.getElementById('ca-op').textContent = op;
+    document.getElementById('ca-op2').textContent = op;
+    await caLoadContracts();
+    show('screen-visit');
+  } catch (e) {
+    err.textContent = 'Could not check it - ' + ((e && e.message) || e);
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Start';
+  }
+}
+
+function caLogout() {
+  state.operator = null;
+  CA.visitId = null; CA.contract = null; CA.customerRep = null;
+  document.getElementById('inp-operator-pin').value = '';
+  show('screen-login');
+}
+
+// ── the contracts that actually have guns ready ────────────────────────
+async function caLoadContracts() {
+  var sel = document.getElementById('inp-ca-contract');
+  sel.innerHTML = '<option value="">Loading...</option>';
+  try {
+    var r = await supabaseClient.from('bluecard_contracts').select('name').order('name');
+    var names = (r.data || []).map(function (x) { return x.name; }).filter(Boolean);
+    sel.innerHTML = names.map(function (n) {
+      return '<option value="' + n + '"' +
+             (n === 'XRGL40 Colombia 2026' ? ' selected' : '') + '>' + n + '</option>';
+    }).join('');
+    if (!names.length) sel.innerHTML = '<option value="">No contracts found</option>';
+  } catch (e) {
+    sel.innerHTML = '<option value="">Could not read the contracts</option>';
+  }
+}
+
+// ── open the visit ─────────────────────────────────────────────────────
+async function caStartVisit() {
+  var err = document.getElementById('visit-error');
+  var btn = document.getElementById('btn-ca-start');
+  err.style.display = 'none';
+  var contract = document.getElementById('inp-ca-contract').value;
+  var ct       = document.getElementById('inp-ca-cardtype').value;
+  var company  = (document.getElementById('inp-ca-company').value || '').trim();
+  var rep      = (document.getElementById('inp-ca-rep').value || '').trim();
+  if (!contract) { err.textContent = 'Pick the contract'; err.style.display = 'block'; return; }
+  if (!rep) { err.textContent = "The customer's representative has to be named";
+              err.style.display = 'block'; return; }
+  btn.disabled = true; btn.textContent = 'Starting...';
+  try {
+    var r = await supabaseClient.rpc('bc_ca_visit_open', {
+      p_contract: contract, p_card_type: ct, p_our_rep: state.operator,
+      p_customer_company: company || null, p_customer_rep: rep, p_batch_size: null
+    });
+    if (r.error) throw r.error;
+    var d = r.data;
+    if (!d || d.ok === false) {
+      err.textContent = (d && d.error) || 'Could not start the visit';
+      err.style.display = 'block'; return;
+    }
+    CA.visitId         = d.visit_id;
+    CA.contract        = contract;
+    CA.cardType        = ct;
+    CA.customerCompany = company || null;
+    CA.customerRep     = rep;
+    CA.batchSize       = d.batch_size;
+    state.cardType     = ct;
+
+    document.getElementById('ca-visit-line').textContent =
+      contract + '  \u00b7  ' + (company || 'customer') + '  \u00b7  ' + rep;
+    document.getElementById('ca-batch-line').textContent =
+      d.batch_size + ' gun(s) have finished PDI on this contract';
+
+    if (d.batch_size === 0) {
+      showToast('No guns on this contract have finished PDI yet - there is nothing to draw', 'warn');
+    }
+    openFatPdi('PDI', ct);          // hand over to the engine
+    show('screen-fatpdi');
+  } catch (e) {
+    err.textContent = 'Could not start it - ' + ((e && e.message) || e);
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Start the acceptance visit';
+  }
+}
+</script>
+<script src="js/fatpdicust.js?v=ca1.0"></script>
+</body>
+</html>
