@@ -74,7 +74,12 @@ function _bcDropServiceWorker() {
 // A plain check every BC_WATCH_SECS is used rather than a live socket: tablets
 // roam between access points on the floor and a dropped socket silently misses
 // messages, while a check that fails simply succeeds on the next round.
-const BC_APP_VERSION = '1.50';          // keep in step with the index.html footer
+// 25/11/2026 — v1.52. THIS MUST MATCH THE FOOTER IN index.html. It is what
+// the tablet reports as "what I am running", and _bcCheckRelease compares it
+// against tablet_release every minute. Left behind, a tablet that HAS been
+// updated goes on showing "New version 1.52 is out — you are on 1.50" for
+// ever, because the two never agree.
+const BC_APP_VERSION = '1.52';          // keep in step with the index.html footer
 const BC_WATCH_SECS  = 25;
 let _bcWatchTimer = null;
 let _bcMsgShowing  = null;              // the message on screen right now
@@ -790,7 +795,21 @@ function buildIdentityGrid() {
       <label class="yellow">Barrel Production No</label>
       ${bpBatch}
       <div class="serial-row">
-        <input type="text" id="inp-barrel-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false">
+        <!-- v1.51 (25/11/2026): TYPING IN HERE NOW SAVES, THE SAME AS PICKING
+             FROM THE BATCH LIST ABOVE IT.
+             On 25/11 twenty XRGL40 cards were still carrying 2604113433 even
+             though the men said they had typed the corrected number in by
+             hand. They had. It was never saved. pickBarrelBatch() calls
+             scheduleAutoSave(), so CHOOSING a batch saves itself two seconds
+             later — but typing in this box fired nothing at all, and picking
+             "Other — type it below" empties the box and schedules no save.
+             So the man picks Other, types the right number, moves on, and the
+             card keeps the old one. He has no reason to think this time is
+             different, because every other time he touched this field it
+             saved itself.
+             onchange fires when he leaves the box, which is the same moment
+             the batch list would have saved. -->
+        <input type="text" id="inp-barrel-prod-no" placeholder="Tap 📷" autocapitalize="characters" spellcheck="false" onchange="scheduleAutoSave()">
         <img class="serial-thumb" id="thumb-inp-barrel-prod-no">
         <button class="cam-btn" onclick="captureSerial('inp-barrel-prod-no','photo_barrel_prod', false)">📷</button>
       </div>
