@@ -1592,6 +1592,21 @@ setInterval(() => {
 
 // Save ONE gun: only the items changed on this tablet; read the gun first
 // and stop if someone else saved a different result on one of them.
+// 25/11/2026 — EVERY result row has to say which VISIT and which ROUND it
+// belongs to. Both row builders below were copied from fatpdi.js, where no
+// such thing exists, and these two columns were never added — so every row
+// went into weapon_customer_results with visit_id NULL, and nothing could be
+// tied back to a visit (Matrix Card Results found nothing at all).
+function _caRound(us) {
+  const st = (CA.state && CA.state[us]) || null;
+  return Number((st && st.round) || 1) || 1;
+}
+function _caStampRow(r, us) {
+  r.visit_id = CA.visitId || null;
+  r.round    = _caRound(us);
+  return r;
+}
+
 async function _fpSaveUnitSafe(us) {
   const u = fatpdi.units.find(x => x.unitSerial === us);
   if (!u) return false;
@@ -1649,7 +1664,7 @@ async function _fpSaveUnitSafe(us) {
         inspected_by: state.operator, inspected_at: now, doc_code: fatpdi.docCode, updated_at: now
       };
       if (remarksChanged) r.remarks = fatpdi.remarks[us] || null;
-      return r;
+      return _caStampRow(r, us);
     });
     if (rows.length) {
       const { error } = await supabaseClient.from(_fatpdiTable())
@@ -1745,7 +1760,7 @@ async function saveFatPdi(onlyUnit) {
     items.forEach(it => {
       const result = itemResults[it.id];
       if (!result) return; // skip untouched items — allows partial saves
-      rows.push({
+      rows.push(_caStampRow({
         ...accExtra,
         unit_serial: us,
         launcher_serial: u.launcherSerial,
@@ -1761,7 +1776,7 @@ async function saveFatPdi(onlyUnit) {
         inspected_at: new Date().toISOString(),
         doc_code: fatpdi.docCode,
         updated_at: new Date().toISOString()
-      });
+      }, us));
     });
   });
 
