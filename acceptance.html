@@ -31,7 +31,7 @@
   screen for the Blue Card at a glance.
 ───────────────────────────────────────────────────────────────────────── -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="css/style.css?v=ca1.1">
+<link rel="stylesheet" href="css/style.css?v=ca1.2">
 <style>
   /* the client's screen is GREEN. Same shapes as the Blue Card so it is
      familiar, a different colour so it can never be confused with it. */
@@ -80,7 +80,10 @@
              font-weight:800; font-size:12px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
   .fp-prog { font-size:12px; font-weight:700; white-space:nowrap; }
   /* v1.35: who did it / who has it open */
-  .fp-who  { font-size:10px; color:var(--text-dim,#8fa3c0); }
+  /* 25/11/2026 — these sit on LIGHT cards, so they must use the card ink,
+     not --text / --text-dim, which are set white + pale green for the DARK
+     green page background. White on a light card is invisible. */
+  .fp-who  { font-size:10px; color:#5a6a85; }
   .fp-busy { font-size:10px; font-weight:800; color:#e08f1a; }
   .fp-saved { font-size:10.5px; font-weight:600; color:#5b6b80; }
   .fp-band { background:var(--fp-band); color:#fff; border-radius:10px; padding:10px 14px; margin-bottom:12px; }
@@ -91,7 +94,7 @@
             margin-bottom:10px; box-shadow:0 2px 4px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04); transition:box-shadow 0.15s; }
   .fp-row[data-result="PASS"] { border-color:var(--pass,#1a9e5c); background:#f0faf5; box-shadow:0 2px 8px rgba(26,158,92,0.15); }
   .fp-row[data-result="FAIL"] { border-color:var(--fail,#d93025); background:#fdf2f2; box-shadow:0 2px 8px rgba(217,48,37,0.15); }
-  .fp-label { display:block; font-size:13px; color:var(--text); margin-bottom:10px; line-height:1.4; }
+  .fp-label { display:block; font-size:13px; color:var(--fp-ink); font-weight:600; margin-bottom:10px; line-height:1.4; }
   .fp-label .fp-no { color:var(--fp-ink); font-weight:800; margin-right:6px; }
   .fp-btns { display:flex; gap:8px; }
   .fp-btn { flex:1; padding:10px 4px; border:none; border-radius:8px; font-size:12px; font-weight:800; letter-spacing:0.06em;
@@ -108,7 +111,7 @@
   /* v1.31: final sign-off on the PDI page */
   .fp-final { border:1px solid var(--fp-edge); background:#fff; border-radius:10px; padding:12px 13px; margin:12px 0 4px; }
   .fp-final h3 { margin:0 0 8px; font-size:13px; color:var(--fp-ink); letter-spacing:0.04em; }
-  .fp-final .fp-req { display:flex; gap:8px; font-size:12.5px; padding:3px 0; color:var(--text); }
+  .fp-final .fp-req { display:flex; gap:8px; font-size:12.5px; padding:3px 0; color:var(--fp-ink); }
   .fp-final .fp-req .ok  { color:#1a9e5c; font-weight:800; width:18px; }
   .fp-final .fp-req .no  { color:#d93025; font-weight:800; width:18px; }
   .fp-final .fp-req .why { color:#8a2020; font-size:11.5px; }
@@ -368,8 +371,8 @@
      display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="js/supabase.js?v=ca1.1"></script>
-<script src="js/fatpdi_config.js?v=ca1.1"></script>
+<script src="js/supabase.js?v=ca1.2"></script>
+<script src="js/fatpdi_config.js?v=ca1.2"></script>
 <script>
 // ── the connection ─────────────────────────────────────────────────────
 // 25/11/2026 — js/supabase.js declares supabaseClient as null and only
@@ -513,6 +516,6 @@ async function caStartVisit() {
   }
 }
 </script>
-<script src="js/fatpdicust.js?v=ca1.1"></script>
+<script src="js/fatpdicust.js?v=ca1.2"></script>
 </body>
 </html>
