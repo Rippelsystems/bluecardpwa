@@ -5,7 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Rippel Matrix — Component Count</title>
 <!-- ─────────────────────────────────────────────────────────────────────────
-  count.html — Component Count on the tablet (v1.3, 24 Nov 2026)
+  count.html — Component Count on the tablet (v1.4, 26 Nov 2026)
+  v1.4: A PROPER PHOTO, NOT A VIDEO FRAME (Gerhard 26/11/2026, step 1 of
+        the better-count idea). "Count" used to grab one frame of the live
+        video and shrink it to 1280 px wide. It now asks the camera for a
+        real still photo (full sensor, focused and exposed as a photo) and
+        works on it at up to 2048 px wide. If the tablet cannot take a
+        still, it falls back to the video frame exactly as before.
+        The counting steps are the same; their pixel sizes (blur, clean-up,
+        row order, the lines drawn) now scale with the photo width, so a
+        1280 px picture counts exactly as it did in v1.3. Saved shapes are
+        size-independent and stay valid. "Use a photo" gains the same
+        2048 px working size.
   v1.3: THE IDLE LOGOUT WAS THROWING AWAY A COUNT IN HAND. Five minutes
         without touching the tablet logged the storeman out and wiped the
         job (logout() sets job: null), so he came back from counting a bin
@@ -228,7 +239,7 @@
 // ─── ENVIRONMENT ─────────────────────────────────────────────────────────────
 // LIVE = the Blue Card connection (js/supabase.js). ?env=test = TEST database
 // (same TEST connection as receiving.html).
-const CNT_VERSION = "1.3";
+const CNT_VERSION = "1.4";
 const CNT_TEST = /(^|[?&])env=test(&|$)/i.test(location.search);
 const CNT_TEST_URL = "https://wtkbsvopuvtxiprjtqqx.supabase.co";
 const CNT_TEST_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind0a2Jzdm9wdXZ0eGlwcmp0cXF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA1OTUzNjIsImV4cCI6MjA5NjE3MTM2Mn0.q3cRrSbgmgzaw9PzHEuXaic-3Cl-JAiAPVbZnyoY8SQ";
@@ -725,7 +736,10 @@ const CS = { pol: "auto", thr: 0, minp: 15, edge: true, strict: 20, sizeOn: true
 const C = { stream: null, frame: null, blobs: [], auto: 0, adj: 0, refArea: null, detail: "", shot: false,
             selPt: null, sel: null };
 let SHAPE = null;         // the shape in use for this count (full row with outline points) — v1.1
-const MAX_W = 1280;
+const MAX_W = 2048;       // v1.4: working width of the counted photo (was 1280)
+const BASE_W = 1280;      // the width every pixel size in runCount()/draw() was tuned at
+const pxScale = w => Math.max(1, w / BASE_W);
+const oddPx = v => { const k = Math.max(1, Math.round(v)); return k % 2 ? k : k + 1; };
 
 // openCamera() is the one way into a count — it opens the camera or the number
 // pad, whichever this tablet is set to. Nothing above it needs to know which.
@@ -929,10 +943,37 @@ function frozen() {
   document.getElementById("btnCount").style.display = "none";
   document.getElementById("btnRetake").style.display = "block";
 }
-function shoot() {
+// v1.4: a real still photo from the camera. Resolves to a canvas, or null when
+// this tablet/browser cannot do it (then shoot() uses the video frame as before).
+async function stillPhoto() {
+  try {
+    if (typeof ImageCapture === "undefined" || !C.stream) return null;
+    const track = C.stream.getVideoTracks()[0];
+    if (!track || track.readyState !== "live") return null;
+    const blob = await Promise.race([
+      new ImageCapture(track).takePhoto(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("photo timeout")), 6000))
+    ]);
+    if (!blob || !blob.size) return null;
+    const bmp = await createImageBitmap(blob);
+    const c = grabToCanvas(bmp, bmp.width, bmp.height);
+    if (bmp.close) bmp.close();
+    return c.width >= 320 ? c : null;
+  } catch (e) { console.warn("[count] still photo not taken, using the video frame:", e); return null; }
+}
+async function shoot() {
   const v = document.getElementById("video");
-  if (!cv || !C.stream || !v.videoWidth) return;
-  C.frame = grabToCanvas(v, v.videoWidth, v.videoHeight);
+  if (!cv || !C.stream || !v.videoWidth || C.busy) return;
+  const btn = document.getElementById("btnCount"), job = S.job;
+  C.busy = true;
+  if (btn) { btn.disabled = true; btn.textContent = "📷 Taking the photo… hold still"; }
+  let frame = null;
+  try { frame = await stillPhoto(); } finally { C.busy = false; }
+  if (btn) { btn.disabled = false; btn.textContent = "📷 Count"; }
+  if (S.screen !== "camera" || S.job !== job || !document.getElementById("video")) return;   // he left meanwhile
+  const vv = document.getElementById("video");
+  C.frame = frame || grabToCanvas(vv, vv.videoWidth, vv.videoHeight);
+  C.still = !!frame;
   frozen(); runCount();
 }
 function retake() {
@@ -965,12 +1006,14 @@ function fromFile(inp) {
 function runCount() {
   if (!cv || !C.frame) return;
   const src = cv.imread(C.frame), gray = new cv.Mat(), bin = new cv.Mat();
-  const k3 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(3, 3));
-  const k5 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+  // v1.4: pixel sizes follow the photo width — at 1280 px these are 3, 5 and 5 as before
+  const ps = pxScale(src.cols), o3 = oddPx(3 * ps), o5 = oddPx(5 * ps);
+  const k3 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(o3, o3));
+  const k5 = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(o5, o5));
   const contours = new cv.MatVector(), hier = new cv.Mat();
   try {
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+    cv.GaussianBlur(gray, gray, new cv.Size(o5, o5), 0);
     const otsu = cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
     const t = Math.max(1, Math.min(254, otsu + CS.thr));
     let inv;
@@ -1026,7 +1069,8 @@ function runCount() {
         total += b.n; if (b.n > 1) multi++; if (!b.n) ignored++;
       });
     }
-    blobs.sort((p, q) => (Math.round(p.cy / 40) - Math.round(q.cy / 40)) || (p.cx - q.cx));
+    const band = 40 * ps;
+    blobs.sort((p, q) => (Math.round(p.cy / band) - Math.round(q.cy / band)) || (p.cx - q.cx));
     C.blobs = blobs; C.auto = total;
     C.sel = C.selPt ? blobs.find(b => inBox(b, C.selPt.x, C.selPt.y)) || null : null;
     C.detail = shp
@@ -1072,21 +1116,22 @@ function draw() {
   const g = out.getContext("2d");
   g.drawImage(f, 0, 0);
   const R = Math.max(10, Math.round(f.width / 70));
+  const lw = pxScale(f.width);      // v1.4: lines keep their look on a larger photo
   let n = 0;
   g.textAlign = "center"; g.textBaseline = "middle";
   C.blobs.forEach(b => {
     const col = b.n === 0 ? "#9E9E9E" : b.n > 1 ? "#E65100" : "#2E7D32";
-    g.lineWidth = 2; g.strokeStyle = col; g.strokeRect(b.r.x, b.r.y, b.r.width, b.r.height);
+    g.lineWidth = 2 * lw; g.strokeStyle = col; g.strokeRect(b.r.x, b.r.y, b.r.width, b.r.height);
     g.beginPath(); g.arc(b.cx, b.cy, R, 0, Math.PI * 2); g.fillStyle = col; g.fill();
-    g.lineWidth = 2; g.strokeStyle = "#fff"; g.stroke();
+    g.lineWidth = 2 * lw; g.strokeStyle = "#fff"; g.stroke();
     g.fillStyle = "#fff"; g.font = `bold ${Math.round(R * (b.n > 1 ? 0.9 : 1.05))}px Arial`;
     if (b.n === 0) g.fillText("×", b.cx, b.cy);
     else { n += b.n; g.fillText(b.n > 1 ? "×" + b.n : String(n), b.cx, b.cy); }
   });
   if (C.sel) {                       // v1.1 — the part tapped
     const b = C.sel;
-    g.lineWidth = 5; g.strokeStyle = "#00B0FF";
-    g.strokeRect(b.r.x - 6, b.r.y - 6, b.r.width + 12, b.r.height + 12);
+    g.lineWidth = 5 * lw; g.strokeStyle = "#00B0FF";
+    g.strokeRect(b.r.x - 6 * lw, b.r.y - 6 * lw, b.r.width + 12 * lw, b.r.height + 12 * lw);
   }
   out.style.display = "block";
 }
@@ -1210,8 +1255,19 @@ async function uploadShapePhoto(id, blob) {
 // ─── 7. SAVE — one database call; safe to repeat (same reference = not saved twice)
 async function saveCount() {
   const manual = (S.screen === "manual");
-  if (!S.ref) return;
-  if (manual ? M.typed === "" : !C.frame) return;
+  // v1.3: a tap on Save must NEVER do nothing without saying so. These two
+  // used to return silently — the operator taps, the screen does not move,
+  // and he has no idea whether it saved. Every way out of here now either
+  // saves and shows the tick, or tells him why it did not.
+  if (!S.ref) {
+    alertMsg("⚠ This count lost its place — go back and open the part again");
+    return;
+  }
+  if (manual ? M.typed === "" : !C.frame) {
+    alertMsg(manual ? "⚠ Type the quantity first"
+                    : "⚠ Tap Count first, so there is something to save");
+    return;
+  }
   const j = S.job, counted = manual ? mVal() : finalCount();
   if (j.mode === "RECEIVING" && counted > j.outstanding &&
       !confirm(`${counted} counted but only ${j.outstanding} outstanding on this line.\n\nSave the count anyway? (More than ordered is booked on the laptop.)`)) return;
