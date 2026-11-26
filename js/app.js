@@ -79,7 +79,7 @@ function _bcDropServiceWorker() {
 // against tablet_release every minute. Left behind, a tablet that HAS been
 // updated goes on showing "New version 1.52 is out — you are on 1.50" for
 // ever, because the two never agree.
-const BC_APP_VERSION = '1.52';          // keep in step with the index.html footer
+const BC_APP_VERSION = '1.55';          // keep in step with the index.html footer
 const BC_WATCH_SECS  = 25;
 let _bcWatchTimer = null;
 let _bcMsgShowing  = null;              // the message on screen right now
@@ -439,11 +439,48 @@ async function loadResumeScreen() {
       .select('id,launcher_serial,sight_serial,trolley_number,trolley_position,client_country,contract_name,created_at,status,card_type,checks,operator_number')
       .neq('status','COMPLETE');
     if (state.cardType) q=q.eq('card_type',state.cardType);
-    const {data}=await q.order('created_at',{ascending:false}).limit(20);
+    // v1.55 (26/11/2026, Gerhard): SHOW THEM ALL. The list stopped at the
+    // newest 20, so on a trolley of 56 the floor had to find every card after
+    // that one by one with Find by Trolley / Position. Now every incomplete
+    // card of this type is listed, in trolley and position order, so the next
+    // position is simply the next card. Picking a trolley in the Trolley box
+    // below narrows the list to that trolley.
+    const {data}=await q.order('created_at',{ascending:false}).limit(1000);
+    _resumeRows=(data||[]).slice().sort(_resumeOrder);
+    // the trolley he was working on stays picked when he comes back from a card
+    if (tSel) {
+      if (_resumeTrolley && _resumeRows.some(r=>String(r.trolley_number)===_resumeTrolley)) tSel.value=_resumeTrolley;
+      else _resumeTrolley='';
+      tSel.onchange=()=>{ _resumeTrolley=String(tSel.value||''); _resumeDraw(); };
+    }
+    _resumeDraw(true);
+  } catch(e) { listEl.innerHTML='<div class="loading-msg">Could not load cards</div>'; }
+}
+let _resumeRows=[], _resumeTrolley='', _resumeLast='';   // _resumeLast = the card opened last, shown outlined
+function _resumeOrder(a,b){
+  const ta=parseInt(a.trolley_number,10), tb=parseInt(b.trolley_number,10);
+  const pa=parseInt(a.trolley_position,10), pb=parseInt(b.trolley_position,10);
+  const na=isNaN(ta), nb=isNaN(tb);
+  if (na!==nb) return na?1:-1;                       // cards with no trolley yet go last
+  if (!na && ta!==tb) return ta-tb;
+  const npa=isNaN(pa), npb=isNaN(pb);
+  if (npa!==npb) return npa?1:-1;
+  if (!npa && pa!==pb) return pa-pb;
+  return String(b.created_at||'').localeCompare(String(a.created_at||''));   // newest first
+}
+function _resumeOpen(id){ _resumeLast=String(id); loadBuild(id); }
+function _resumeDraw(scrollToLast){
+  const listEl=document.getElementById('my-cards-list'); if (!listEl) return;
+  const tSel=document.getElementById('inp-find-trolley');
+  const t=tSel?String(tSel.value||''):'';
+  const data=t?_resumeRows.filter(r=>String(r.trolley_number)===t):_resumeRows;
+  {
     if (!data||data.length===0) {
-      listEl.innerHTML=`<div class="loading-msg">No incomplete ${state.cardType||''} cards — start a new one below</div>`;
+      listEl.innerHTML=t
+        ? `<div class="loading-msg">No incomplete ${state.cardType||''} cards on Trolley ${t}</div>`
+        : `<div class="loading-msg">No incomplete ${state.cardType||''} cards — start a new one below</div>`;
     } else {
-      listEl.innerHTML=data.map(r=>{
+      listEl.innerHTML=`<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin:0 0 8px 2px;">${data.length} incomplete card${data.length===1?'':'s'}${t?' on Trolley '+t:' — all trolleys, in trolley and position order'}</div>`+data.map(r=>{
         const st=(r.status||'IN PROGRESS').toUpperCase();
         const stColour=st==='COMPLETE'?'#1a9e5c':'#e08f1a';
         const stLabel=st==='COMPLETE'?'✓ COMPLETE':'⏳ IN PROGRESS';
@@ -453,7 +490,7 @@ async function loadResumeScreen() {
         const fails=Object.values(checks).filter(v=>v&&(v.result==='FAIL'||v.result==='NO-GO')).length;
         const checksLabel=done>0?`${done} checks done${fails>0?' · '+fails+' FAIL':''}`:' No checks yet';
         return `
-        <div class="resume-card" onclick="loadBuild('${r.id}')">
+        <div class="resume-card" ${String(r.id)===_resumeLast?'id="resume-last" style="outline:3px solid var(--accent);outline-offset:1px;"':''} onclick="_resumeOpen('${r.id}')">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
             <span style="background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;">${r.card_type||'RLL'}</span>
             <span style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--accent);">${_rowIdentifierSerial(r)||'No serial yet'}</span>
@@ -465,8 +502,12 @@ async function loadResumeScreen() {
           </div>
           <div style="font-size:11px;color:${fails>0?'#e05050':'var(--text-dim)'};">${checksLabel}</div>
         </div>`;}).join('');
+      if (scrollToLast===true) {
+        const last=document.getElementById('resume-last');
+        if (last && last.scrollIntoView) { try { last.scrollIntoView({block:'center'}); } catch(e) {} }
+      }
     }
-  } catch(e) { listEl.innerHTML='<div class="loading-msg">Could not load cards</div>'; }
+  }
 }
 
 async function findBySerial() {
