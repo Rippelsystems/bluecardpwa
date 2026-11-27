@@ -1071,6 +1071,7 @@ function _caRenderSelected() {
   } else if (sg.current) {
     sign.innerHTML = `<div class="ca-sig-done">✓ Signed by ${_fpEsc(sg.signed_name || '')}<br>
         <span>${_fpEsc(_caWhen(sg.signed_at))} · ${sg.units_count} unit(s)</span></div>
+      <button type="button" class="ca-sig-finish" onclick="caFinishVisit()">✓ Finish the visit · Main Menu</button>
       <button type="button" class="ca-sig-again" onclick="caSignatureOpen()">Sign again</button>`;
   } else if (_caAllDone()) {
     sign.innerHTML = `<div class="ca-sel-note">Every selected unit is done.${sg.signed ? ' A unit was signed off after the last signature, so it has to be signed again.' : ''}</div>
@@ -1112,6 +1113,37 @@ async function caRemoveSelected(us) {
     caLoadSelected(true);
   } catch (e) {
     showToast('❌ Could not remove it — ' + ((e && e.message) || e), 'error');
+  }
+}
+
+// 27/11/2026 — the way out once the representative has signed. It closes the
+// visit (bc_ca_visit_close, which refuses while a unit is not signed off),
+// takes the note of it off this device, and goes back to the Main Menu.
+// No outcome is sent: when a visit counts as ACCEPTED is not a rule this
+// page has been given.
+async function caFinishVisit() {
+  if (!CA.visitId) { window.location.href = 'menu.html'; return; }
+  if (!(CA.signature && CA.signature.current)) {
+    showToast('The representative has to sign first', 'warn'); return;
+  }
+  if (!confirm('Finish this acceptance visit?\n\n' + CA.sel.length + ' unit(s), signed by '
+      + (CA.signature.signed_name || CA.customerRep || '') + '.\n\n'
+      + 'The visit is closed. No more units can be added to it.')) return;
+  try {
+    const { data, error } = await _withTimeout(supabaseClient.rpc('bc_ca_visit_close', {
+      p_visit_id: CA.visitId, p_outcome: null, p_by: String(state.operator || ''), p_notes: null
+    }), 20000, 'Closing the visit');
+    if (error) throw error;
+    if (data && data.ok === false && !/already closed/i.test(data.error || '')) {
+      showToast('❌ ' + (data.error || 'Not closed'), 'error');
+      caLoadSelected(false);
+      return;
+    }
+    if (typeof caForget === 'function') caForget();
+    CA.visitId = null;
+    window.location.href = 'menu.html';
+  } catch (e) {
+    showToast('❌ Could not close the visit — ' + ((e && e.message) || e), 'error');
   }
 }
 
