@@ -7,7 +7,9 @@
 <title>Client Acceptance Record — Rippel Matrix</title>
 <link rel="manifest" href="manifest.json">
 <!-- ─────────────────────────────────────────────────────────────────────────
-  acceptance.html — CLIENT ACCEPTANCE RECORD          v1.1 · 26/11/2026
+  acceptance.html — CLIENT ACCEPTANCE RECORD          v1.2 · 27/11/2026
+  v1.2 (27/11/2026, Gerhard): Remove on untested units; Finish the visit and
+  Main Menu on the Selected units page.
   v1.1 (26/11/2026, Gerhard): built for a cell phone.
         - Start of visit: one box, "Representative" (the Customer box went).
         - The units are still chosen from the trolley / position list; a
@@ -40,7 +42,7 @@
   screen for the Blue Card at a glance.
 ───────────────────────────────────────────────────────────────────────── -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800&family=DM+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="css/style.css?v=ca1.4">
+<link rel="stylesheet" href="css/style.css?v=ca1.5">
 <style>
   /* the client's screen is GREEN. Same shapes as the Blue Card so it is
      familiar, a different colour so it can never be confused with it. */
@@ -98,6 +100,9 @@
   .ca-sig-done span{ font-size:12px; font-weight:600; color:#3d6b52; }
   .ca-sig-again{ margin-top:8px; background:transparent; border:1px solid var(--border); color:var(--text-dim);
     border-radius:8px; font-size:12px; font-weight:700; padding:8px 12px; cursor:pointer; }
+  .ca-sig-finish{ display:block; width:100%; margin-top:10px; border:none; border-radius:10px; background:#1a9e5c;
+    color:#fff; font-size:16px; font-weight:800; padding:14px 12px; min-height:50px; cursor:pointer; }
+  .ca-sel-menu{ display:block; width:100%; margin-top:10px; }
   .ca-sel-foot{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
   .ca-sel-foot .btn{ margin:0; }
   .ca-sig-wrap{ position:fixed; inset:0; z-index:9500; background:rgba(4,20,10,.88); display:flex;
@@ -255,7 +260,7 @@
 </style>
 </head>
 <body>
-<span class="ca-file" id="ca-file-label">acceptance.html v1.1</span>
+<span class="ca-file" id="ca-file-label">acceptance.html v1.2</span>
 
 <!-- ═══ 1. LOGIN — our man logs in, then hands the tablet over ═══════════ -->
 <section id="screen-login" class="screen active">
@@ -431,6 +436,10 @@
         <button type="button" class="btn btn-secondary" onclick="caShowChoose()">‹ Add units</button>
         <button type="button" class="btn btn-secondary" onclick="caLoadSelected(false)">↻ Refresh</button>
       </div>
+      <!-- 27/11/2026: a way back to the menu. The visit stays open and is
+           offered back on this device the next time someone logs in here. -->
+      <button type="button" class="btn btn-secondary ca-sel-menu"
+              onclick="window.location.href='menu.html'">‹ Main Menu</button>
     </div>
 
     <!-- v1.30: ONE unit at a time — vertical PASS / FAIL cards like Checks,
@@ -450,8 +459,8 @@
      display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="js/supabase.js?v=ca1.4"></script>
-<script src="js/fatpdi_config.js?v=ca1.4"></script>
+<script src="js/supabase.js?v=ca1.5"></script>
+<script src="js/fatpdi_config.js?v=ca1.5"></script>
 <script>
 // ── the connection ─────────────────────────────────────────────────────
 // 25/11/2026 — js/supabase.js declares supabaseClient as null and only
@@ -643,6 +652,6 @@ async function caStartVisit() {
   }
 }
 </script>
-<script src="js/fatpdicust.js?v=ca1.4"></script>
+<script src="js/fatpdicust.js?v=ca1.5"></script>
 </body>
 </html>
