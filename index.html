@@ -104,52 +104,59 @@
     RIPPEL EFFECT SYSTEMS (PTY) LTD · UNMATCHED INNOVATION
   </div>
   <div style="margin-top:8px;font-size:13px;font-weight:700;color:#ffffff;letter-spacing:0.08em;text-align:center;font-family:monospace;">
-    v1.55 · 26 Nov 2026
+    v1.56 · 27 Nov 2026
   </div>
 
 </section>
 
 <!-- ══ RESUME ════════════════════════════════════════════════════════════════ -->
 <section id="screen-resume" class="screen">
-  <div class="topbar">
+  <!-- v1.56 (27/11/2026, Gerhard): Find, Start New, Switch card type and
+       Change Operator used to sit UNDER the list of cards. Since v1.55 the
+       list shows every position, so they were a long scroll away every
+       time. They are now a frozen panel at the top; only the list scrolls.
+       Every id and every button action is unchanged. -->
+  <div class="resume-frozen">
+  <div class="topbar" style="position:static;">
     <span class="card-badge" id="resume-card-badge">RLL</span>
     <span class="title">Resume or New Card</span>
     <span class="operator-tag">OP <span id="resume-op">—</span></span>
   </div>
+  <div class="resume-tools">
+    <button class="btn btn-primary rt-new" onclick="startNewCard()">+ Start New Build Card</button>
+    <div class="rt-row">
+      <div class="rt-find">
+        <label id="resume-find-serial-head" for="inp-find-serial">Find by Launcher Serial</label>
+        <div class="rt-pair">
+          <input type="text" id="inp-find-serial" placeholder="e.g. RLL 26004"
+                 autocapitalize="characters" spellcheck="false">
+          <button class="btn btn-primary rt-btn" onclick="findBySerial()">Find</button>
+        </div>
+      </div>
+      <div class="rt-find" id="resume-find-trolley">
+        <label>Find by Trolley / Position</label>
+        <div class="rt-pair">
+          <select id="inp-find-trolley"></select>
+          <select id="inp-find-pos"></select>
+          <button class="btn btn-secondary rt-btn" onclick="findByTrolley()">Find</button>
+        </div>
+      </div>
+    </div>
+    <!-- v1.43 (20/11/2026): switch card type here — same operator, no End Session -->
+    <div class="rt-row rt-last">
+      <div id="resume-switch-type" class="switch-type">
+        <span class="switch-type-lbl">Card type:</span>
+        <button type="button" data-ct="RLL" onclick="switchCardType('RLL')">RLL 37/38</button>
+        <button type="button" data-ct="XRGL40" onclick="switchCardType('XRGL40')">XRGL40</button>
+        <button type="button" data-ct="GRN40" onclick="switchCardType('GRN40')">GRN40</button>
+      </div>
+      <button class="btn btn-secondary rt-op" onclick="changeCardType()">🔄 Change Operator</button>
+    </div>
+  </div>
+  </div>
   <div class="content">
     <div class="section-head"><span class="section-num">A</span><h2>My Incomplete Cards</h2></div>
     <div id="my-cards-list"><div class="loading-msg">Loading…</div></div>
-    <div class="divider"></div>
-    <div class="section-head"><span class="section-num">B</span><h2 id="resume-find-serial-head">Find by Launcher Serial</h2></div>
-    <div style="display:flex;gap:8px;margin-bottom:16px;">
-      <input type="text" id="inp-find-serial" placeholder="e.g. RLL 26004"
-             autocapitalize="characters" style="flex:1;" spellcheck="false">
-      <button class="btn btn-primary" style="width:auto;padding:11px 16px;" onclick="findBySerial()">Find</button>
-    </div>
-    <div id="resume-find-trolley">
-    <div class="section-head"><span class="section-num">C</span><h2>Find by Trolley</h2></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
-      <div class="field-group" style="margin:0;">
-        <label>Trolley No</label>
-        <select id="inp-find-trolley" style="font-size:14px;"></select>
-      </div>
-      <div class="field-group" style="margin:0;">
-        <label>Position</label>
-        <select id="inp-find-pos" style="font-size:14px;"></select>
-      </div>
-    </div>
-    <button class="btn btn-secondary" onclick="findByTrolley()">Find by Trolley / Position</button>
-    </div>
-    <div class="divider"></div>
-    <button class="btn btn-primary" onclick="startNewCard()">+ Start New Build Card</button>
-    <!-- v1.43 (20/11/2026): switch card type here — same operator, no End Session -->
-    <div id="resume-switch-type" class="switch-type">
-      <span class="switch-type-lbl">Switch card type:</span>
-      <button type="button" data-ct="RLL" onclick="switchCardType('RLL')">RLL 37/38</button>
-      <button type="button" data-ct="XRGL40" onclick="switchCardType('XRGL40')">XRGL40</button>
-      <button type="button" data-ct="GRN40" onclick="switchCardType('GRN40')">GRN40</button>
-    </div>
-    <button class="btn btn-secondary" style="margin-top:8px;" onclick="changeCardType()">🔄 Change Operator / End Session</button>
 
   </div>
 </section>
@@ -400,6 +407,30 @@
   .switch-type button { flex:1; min-width:90px; padding:10px 8px; font-size:13px; font-weight:700; cursor:pointer;
             border:1px solid var(--border); border-radius:var(--radius,8px); background:var(--surface); color:var(--text); }
   .switch-type button.on { background:var(--accent); border-color:var(--accent); color:#ffffff; cursor:default; opacity:1; }
+  /* v1.56: the frozen tools panel on the Resume / New Card page */
+  .resume-frozen { position:sticky; top:0; z-index:10; background:var(--bg,#f0f2f5);
+                   box-shadow:0 3px 10px rgba(0,0,0,.18); }
+  .resume-tools { max-width:640px; margin:0 auto; padding:8px 16px 10px; }
+  .resume-tools .btn { margin-top:0; }
+  .resume-tools .rt-new { padding-top:11px; padding-bottom:11px; }
+  .resume-tools .rt-row { display:flex; gap:10px; margin-top:8px; align-items:flex-end; }
+  .resume-tools .rt-find { flex:1 1 0; min-width:0; }
+  .resume-tools .rt-find label { display:block; font-size:11px; font-weight:700; letter-spacing:.04em;
+                   text-transform:uppercase; color:var(--text-dim,#5a6a85); margin-bottom:3px; }
+  .resume-tools .rt-pair { display:flex; gap:6px; }
+  .resume-tools .rt-pair input, .resume-tools .rt-pair select { flex:1 1 0; min-width:0; width:auto;
+                   font-size:14px; padding:9px 8px; margin:0; }
+  .resume-tools .rt-btn { flex:0 0 auto; width:auto; padding:9px 14px; }
+  .resume-tools .rt-last { align-items:stretch; }
+  .resume-tools .switch-type { flex:1 1 auto; margin-top:0; flex-wrap:nowrap; gap:6px; }
+  .resume-tools .switch-type button { min-width:0; padding:9px 6px; }
+  .resume-tools .rt-op { flex:0 0 auto; width:auto; padding:9px 12px; font-size:13px; }
+  @media (max-width:560px) {
+    .resume-tools .rt-row { flex-wrap:wrap; }
+    .resume-tools .rt-find { flex:1 1 100%; }
+    .resume-tools .rt-op { flex:1 1 100%; }
+    .resume-tools .switch-type-lbl { display:none; }
+  }
 </style>
 
 <!-- ══ IDENTITY ══════════════════════════════════════════════════════════════ -->
@@ -594,7 +625,7 @@
 <script src="js/logo.js?v=1.51"></script>
 <script src="js/cardconfig.js?v=1.51"></script>
 <script src="js/fatpdi_config.js?v=1.51"></script>
-<script src="js/app.js?v=1.55"></script>
+<script src="js/app.js?v=1.56"></script>
 <script src="js/fatpdi.js?v=1.51"></script>
 <script src="js/camera_enhanced.js?v=1.51"></script>
 <script src="js/rearassy.js?v=1.51"></script>
