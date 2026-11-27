@@ -79,12 +79,17 @@ function _bcDropServiceWorker() {
 // against tablet_release every minute. Left behind, a tablet that HAS been
 // updated goes on showing "New version 1.52 is out — you are on 1.50" for
 // ever, because the two never agree.
-const BC_APP_VERSION = '1.55';          // keep in step with the index.html footer
+const BC_APP_VERSION = '1.56';          // keep in step with the index.html footer
 const BC_WATCH_SECS  = 25;
 let _bcWatchTimer = null;
 let _bcMsgShowing  = null;              // the message on screen right now
 let _bcWatchMissing = false;            // the message SQL is not on this database
 let _bcUpdateShown  = false;            // the update bar is already up
+// v1.56 (27/11/2026): "Later" used to silence the bar until the page was
+// reloaded. It now hides it for 10 minutes for THAT version only; a newer
+// version shows at once.
+let _bcLaterUntil = 0, _bcLaterVersion = '';
+const BC_LATER_MINS = 10;
 
 function _bcDeviceName() {              // a steady name for this tablet
   try {
@@ -118,6 +123,7 @@ async function _bcCheckRelease() {
     if (error) { if (_isMissingFn(error)) _bcWatchMissing = true; return; }
     if (!data || !data.ok || !data.version) return;
     if (String(data.version) === String(BC_APP_VERSION)) return;
+    if (String(data.version) === _bcLaterVersion && Date.now() < _bcLaterUntil) return;
     _bcUpdateShown = true;
     _bcShowUpdateBar(String(data.version), data.note || '');
   } catch (e) { /* next round */ }
@@ -146,7 +152,12 @@ function _bcShowUpdateBar(version, note) {
   later.setAttribute('style',
     'flex:0 0 auto;border:none;border-radius:10px;padding:14px 16px;font-size:15px;' +
     'font-weight:700;background:rgba(255,255,255,.18);color:#fff');
-  later.onclick = () => { bar.remove(); };
+  later.onclick = () => {
+    bar.remove();
+    _bcLaterVersion = String(version);
+    _bcLaterUntil = Date.now() + BC_LATER_MINS * 60000;
+    _bcUpdateShown = false;               // let the check run again
+  };
   bar.appendChild(words); bar.appendChild(go); bar.appendChild(later);
   document.body.appendChild(bar);
 }
@@ -478,7 +489,7 @@ function _resumeDraw(scrollToLast){
     if (!data||data.length===0) {
       listEl.innerHTML=t
         ? `<div class="loading-msg">No incomplete ${state.cardType||''} cards on Trolley ${t}</div>`
-        : `<div class="loading-msg">No incomplete ${state.cardType||''} cards — start a new one below</div>`;
+        : `<div class="loading-msg">No incomplete ${state.cardType||''} cards — start a new one with the button above</div>`;
     } else {
       listEl.innerHTML=`<div style="font-size:12px;font-weight:700;color:var(--text-dim);margin:0 0 8px 2px;">${data.length} incomplete card${data.length===1?'':'s'}${t?' on Trolley '+t:' — all trolleys, in trolley and position order'}</div>`+data.map(r=>{
         const st=(r.status||'IN PROGRESS').toUpperCase();
