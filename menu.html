@@ -8,6 +8,8 @@
 <link rel="manifest" href="manifest.json">
 <!-- ─────────────────────────────────────────────────────────────────────────
   menu.html — front page on the tablets (v1.9, 25 Nov 2026)
+  v1.15 (27/11/2026): index.html bumped to v1.56 in PAGEV (Find / Start New
+  frozen at the top of the Blue Card list).
   v1.14 (27/11/2026): acceptance.html bumped to ca1.5 in PAGEV (Finish the
   visit / Main Menu).
   v1.13 (26/11/2026): acceptance.html bumped to ca1.4 in PAGEV (Selected units
@@ -137,7 +139,7 @@
 </head>
 <body>
 <div class="wrap">
-  <span class="file">menu.html v1.14</span>
+  <span class="file">menu.html v1.15</span>
   <div class="test" id="testbar" hidden>⚠ TEST MODE — Goods Receiving and Component Count use the TEST database</div>
   <div class="brand">RIPPEL EFFECT SYSTEMS</div>
   <h1>RIPPEL <span>MATRIX</span></h1>
@@ -172,7 +174,7 @@
   </div>
 
   <div class="foot">Use the tablet's back button to return to this menu.</div>
-  <div class="ver">v1.14 &middot; 27 Nov 2026</div>
+  <div class="ver">v1.15 &middot; 27 Nov 2026</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -185,7 +187,7 @@
     // one never arrives. BUMP THE NUMBER OF ANY PAGE YOU CHANGE, and load this
     // menu.html with it — the tablet then fetches that page fresh, once.
     var PAGEV = {
-      'go-bluecard':  { page: 'index.html',      v: '1.55',  test: false },
+      'go-bluecard':  { page: 'index.html',      v: '1.56',  test: false },
       'go-acceptance':{ page: 'acceptance.html', v: 'ca1.5', test: false },
       'go-receiving': { page: 'receiving.html',  v: '1.3',   test: true  },
       'go-count':     { page: 'count.html',      v: '1.4',   test: true  },
