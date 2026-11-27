@@ -172,7 +172,14 @@ const CA = {
   customerCompany: null,
   customerRep: null,     // asked again at every signature, never assumed
   batchSize:   null,
-  state:       {}        // unit_serial -> last answer from bc_ca_unit_state
+  state:       {},       // unit_serial -> last answer from bc_ca_unit_state
+  // 26/11/2026 — two pages: 'choose' (the whole batch, tick to select) and
+  // 'selected' (only the units the customer picked, where the testing is done)
+  view:        'choose',
+  selCount:    0,        // units selected on this visit, whatever the filters show
+  sel:         [],       // the selected page's rows, as last read from the database
+  signature:   null,     // last answer from bc_ca_visit_signature
+  sigPrompted: false     // the signature pad has already been offered for this state
 };
 // 31/10/2026: a stage flagged `acceptance: true` in fatpdi_config.js (the GRN40
 // FAT = RES-QC-16 Final Acceptance) carries the paper form's extra fields —
@@ -405,6 +412,7 @@ async function _caLoadUnits(reset, els) {
   if (error) throw error;
 
   let rows = data || [];
+  CA.selCount = rows.filter(r => r.already_drawn).length;   // 26/11/2026: the whole visit, not just what the filters show
   const q = String(fatpdi.filterSearch || '').trim().toUpperCase();
   if (q) rows = rows.filter(r => String(r.unit_serial || '').toUpperCase().indexOf(q) >= 0);
   if (fatpdi.filterTrolley)
@@ -786,7 +794,10 @@ function _fpHeldTag(u) {
 }
 function _fpShowList() {
   const lv = document.getElementById('fatpdi-list-view'), uv = document.getElementById('fatpdi-unit-view');
-  if (lv) lv.style.display = '';
+  const sv = document.getElementById('ca-selected-view');
+  const onSel = !!(sv && CA.view === 'selected');      // 26/11/2026: back goes to the page he came from
+  if (lv) lv.style.display = onSel ? 'none' : '';
+  if (sv) sv.style.display = onSel ? '' : 'none';
   if (uv) { uv.style.display = 'none'; uv.innerHTML = ''; }
 }
 
@@ -799,10 +810,12 @@ function _fpShowList() {
 //  opened — otherwise a man could test a gun nobody drew and it would belong
 //  to no visit and no certificate.
 //
-//  There is no untick. Once the client has drawn a gun it is part of the
-//  record of what they asked to see, whether it passes or not. Taking it
-//  back out would be the one edit that makes an acceptance document
-//  worthless.
+//  There is no untick on this list. 27/11/2026 (Gerhard): a unit that was
+//  selected but NEVER TESTED can be taken off on the Selected units page
+//  (caRemoveSelected -> bc_ca_unit_remove), so "test only 8 of the 10" does
+//  not hold the signature back. A unit with any mark or a sign-off stays:
+//  it is part of the record of what the client tested. Every removal is
+//  written to the acceptance log.
 // ═══════════════════════════════════════════════════════════════════════════
 async function _caDraw(cb, us) {
   if (!CA.visitId) { showToast('No acceptance visit is open', 'error'); return; }
@@ -818,8 +831,10 @@ async function _caDraw(cb, us) {
       return;
     }
     const u = fatpdi.units.find(x => x.unitSerial === us);
+    if (u && !u.caDrawn) CA.selCount = (CA.selCount || 0) + 1;
     if (u) { u.caDrawn = true; u.status = 'DRAWN'; }
-    showToast('✓ ' + us + ' drawn for the client', 'ok');
+    CA.sigPrompted = false;
+    showToast('✓ ' + us + ' selected', 'ok');
     _renderFatPdiList();
   } catch (e) {
     cb.checked = false;
@@ -894,6 +909,306 @@ function _renderFatPdiList() {
   // the list has nothing to save — saving happens per unit
   const saveAll = document.getElementById('btn-fatpdi-save');
   if (saveAll) saveAll.style.display = 'none';
+  _caSelButtons();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  THE SELECTED UNITS PAGE, AND THE CUSTOMER'S SIGNATURE — 26/11/2026
+//
+//  Gerhard: the units are chosen from the trolley/position list as before;
+//  then a button takes them to a second page that lists ONLY the units the
+//  customer selected, so they are all together. The testing is done from
+//  there, on a cell phone, so each row is just the serial, where it stands,
+//  and Open. When every selected unit has had its final approval sign-off,
+//  the representative signs ONCE on the screen, and that signature is kept
+//  with the acceptance record (customer_acceptance_signatures) and shown on
+//  the certificate in Matrix.
+// ═══════════════════════════════════════════════════════════════════════════
+function _caSelButtons() {
+  document.querySelectorAll('.ca-to-selected').forEach(b => {
+    const k = CA.selCount || 0;
+    b.textContent = k ? `Selected units (${k})  ›` : 'Selected units  ›';
+  });
+}
+
+function caShowChoose() {
+  CA.view = 'choose';
+  _fpShowList();
+  _loadFatPdiUnits(true);          // the filters decide what this page lists
+  window.scrollTo(0, 0);
+}
+
+function caShowSelected() {
+  if (!CA.visitId) { showToast('No acceptance visit is open', 'error'); return; }
+  CA.view = 'selected';
+  _fpShowList();
+  window.scrollTo(0, 0);
+  caLoadSelected(false);
+}
+
+// Reads the selection fresh from the database every time: which units, where
+// each one stands, what has been marked, and whether the visit is signed.
+async function caLoadSelected(mayPrompt) {
+  const list = document.getElementById('ca-sel-list'), msg = document.getElementById('ca-sel-msg');
+  if (!list || !CA.visitId) return;
+  if (!CA.sel.length) list.innerHTML = '<div class="ca-sel-note">Loading the selected units…</div>';
+  if (msg) msg.textContent = '';
+  try {
+    const visit = CA.visitId;
+    const [av, vs, sg] = await Promise.all([
+      _withTimeout(supabaseClient.rpc('bc_ca_units_available', {
+        p_contract: CA.contract || null, p_card_type: CA.cardType || fatpdi.cardType, p_visit_id: visit
+      }), 20000, 'Loading the selected units'),
+      _withTimeout(supabaseClient.rpc('bc_ca_visit_status', { p_visit_id: visit }), 20000, 'Loading the visit'),
+      _withTimeout(supabaseClient.rpc('bc_ca_visit_signature', { p_visit_id: visit, p_with_image: false }),
+                   20000, 'Loading the signature')
+    ]);
+    if (av.error) throw av.error;
+    if (vs.error) throw vs.error;
+    if (visit !== CA.visitId) return;
+    const drawn = (av.data || []).filter(r => r.already_drawn);
+    const stand = {};
+    ((vs.data && vs.data.units) || []).forEach(u => { stand[u.unit_serial] = u; });
+
+    // the engine opens a unit out of fatpdi.units, so every selected unit has
+    // to be in there even when the choose page's filters had left it out
+    drawn.forEach(r => {
+      let u = fatpdi.units.find(x => x.unitSerial === r.unit_serial);
+      if (!u) {
+        u = { unitSerial: r.unit_serial, openFails: 0 };
+        fatpdi.units.push(u);
+      }
+      u.launcherSerial = r.launcher_serial || null; u.sightSerial = r.sight_serial || null;
+      u.trolleyNumber = r.trolley_number; u.trolleyPosition = r.trolley_position;
+      u.contract = r.contract || null; u.caDrawn = true;
+      const st = stand[r.unit_serial];
+      u.status = (st && st.status === 'SIGNED') ? 'SIGNED' : 'DRAWN';
+    });
+    CA.selCount = drawn.length;
+
+    const serials = drawn.map(r => r.unit_serial);
+    if (serials.length) {
+      const { data: marks, error: mErr } = await _withTimeout(
+        supabaseClient.from(_fatpdiTable())
+          .select('unit_serial,item_id,result,remarks,inspected_by,inspected_at')
+          .eq('card_type', fatpdi.cardType).in('unit_serial', serials),
+        20000, 'Loading what has been marked');
+      if (mErr) throw mErr;
+      (marks || []).forEach(_fpTakeRow);
+    }
+
+    CA.sel = drawn.map(r => {
+      const st = stand[r.unit_serial] || {};
+      return { us: r.unit_serial, status: st.status || 'IN PROGRESS', result: st.result || null,
+               round: st.round || 1, openFails: Number(st.open_fails || 0) };
+    });
+    // the signature function is new on 26/11 — without it the page still works
+    CA.signature = (sg && !sg.error && sg.data) ? sg.data : { signed: false, current: false, missing: !!(sg && sg.error) };
+    _caRenderSelected();
+    _caSelButtons();
+    if (mayPrompt && _caAllDone() && !(CA.signature && CA.signature.current)
+        && !CA.signature.missing && !CA.sigPrompted) {
+      CA.sigPrompted = true;
+      caSignatureOpen();
+    }
+  } catch (e) {
+    list.innerHTML = '';
+    if (msg) msg.textContent = '⚠ Could not read the selected units — ' + ((e && e.message) || e)
+                             + '. Check the signal and tap Refresh.';
+  }
+}
+
+function _caAllDone() {
+  return CA.sel.length > 0 && CA.sel.every(x => x.status === 'SIGNED');
+}
+
+function _caWhen(ts) {
+  try {
+    const d = new Date(ts); if (isNaN(d)) return '';
+    const p = v => String(v).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  } catch (e) { return ''; }
+}
+
+function _caRenderSelected() {
+  const list = document.getElementById('ca-sel-list'), sign = document.getElementById('ca-sel-sign');
+  const head = document.getElementById('ca-sel-count');
+  if (!list) return;
+  const done = CA.sel.filter(x => x.status === 'SIGNED').length;
+  if (head) head.textContent = CA.sel.length
+    ? `${CA.sel.length} selected · ${done} done` : '';
+  if (!CA.sel.length) {
+    list.innerHTML = '<div class="ca-sel-note">No units selected yet. Tap “Add units” and tick the ones the customer picks.</div>';
+  } else {
+    list.innerHTML = CA.sel.map(x => {
+      const p = _fpProgress(x.us);
+      let cls = 'todo', txt = 'Not started';
+      if (x.status === 'SIGNED') {
+        cls = x.result === 'FAIL' ? 'fault' : 'done';
+        txt = x.result === 'FAIL' ? `✓ Done · ${x.openFails || p.fails || 1} fault(s) noted` : '✓ Done · passed';
+      } else if (p.done) {
+        cls = 'busy';
+        txt = p.done >= p.total ? `All ${p.total} marked · needs its sign-off` : `${p.done} of ${p.total} marked`;
+      }
+      // 27/11/2026: only a unit nothing has been marked on can be taken off
+      const rm = (cls === 'todo')
+        ? `<button type="button" class="ca-sel-remove" data-unit="${_fpEsc(x.us)}"
+             onclick="event.stopPropagation();caRemoveSelected(this.dataset.unit)">Remove</button>` : '';
+      return `<div class="ca-sel-row ${cls}" data-unit="${_fpEsc(x.us)}" onclick="_caOpenSelected(this.dataset.unit)">
+          <div class="ca-sel-main"><div class="ca-sel-serial">${_fpEsc(x.us)}</div>
+            <div class="ca-sel-state">${txt}</div></div>
+          ${rm}<button type="button" class="ca-sel-open">Open ›</button>
+        </div>`;
+    }).join('');
+  }
+  if (!sign) return;
+  const sg = CA.signature || {};
+  const rep = _fpEsc(CA.customerRep || 'the representative');
+  if (sg.missing) {
+    sign.innerHTML = '<div class="ca-sel-note">The signature step is not set up on the database yet (customer_acceptance_signature_26Nov.sql).</div>';
+  } else if (!CA.sel.length) {
+    sign.innerHTML = '';
+  } else if (sg.current) {
+    sign.innerHTML = `<div class="ca-sig-done">✓ Signed by ${_fpEsc(sg.signed_name || '')}<br>
+        <span>${_fpEsc(_caWhen(sg.signed_at))} · ${sg.units_count} unit(s)</span></div>
+      <button type="button" class="ca-sig-again" onclick="caSignatureOpen()">Sign again</button>`;
+  } else if (_caAllDone()) {
+    sign.innerHTML = `<div class="ca-sel-note">Every selected unit is done.${sg.signed ? ' A unit was signed off after the last signature, so it has to be signed again.' : ''}</div>
+      <button type="button" class="ca-sig-go" onclick="caSignatureOpen()">🖊 ${rep} signs now</button>`;
+  } else {
+    sign.innerHTML = `<div class="ca-sel-note">${rep} signs once, here, when every selected unit is done
+        (${CA.sel.length - done} still to do).</div>
+      <button type="button" class="ca-sig-go" disabled>🖊 Signature</button>`;
+  }
+}
+
+// 27/11/2026 — take a selected unit that was never tested off the visit.
+// The database decides (bc_ca_unit_remove): it refuses a unit with any mark
+// or a sign-off, and logs every removal. If the units that are left are all
+// done, the signature box comes up straight away.
+async function caRemoveSelected(us) {
+  if (!CA.visitId || !us) return;
+  if (!confirm(us + '\n\nTake this unit off the selection?\n\n'
+      + 'Only for a unit the customer decided NOT to test. '
+      + 'It is recorded that it was selected and taken off untested.')) return;
+  try {
+    const { data, error } = await _withTimeout(supabaseClient.rpc('bc_ca_unit_remove', {
+      p_visit_id: CA.visitId, p_unit_serial: us, p_by: String(state.operator || '')
+    }), 20000, 'Removing the unit');
+    if (error) throw error;
+    if (data && data.ok === false) {
+      showToast('❌ ' + (data.error || 'Not removed'), 'error');
+      caLoadSelected(false);
+      return;
+    }
+    const u = fatpdi.units.find(x => x.unitSerial === us);
+    if (u) { u.caDrawn = false; u.status = 'READY'; }
+    CA.sel = CA.sel.filter(x => x.us !== us);
+    CA.selCount = CA.sel.length;
+    CA.sigPrompted = false;
+    showToast('✓ ' + us + ' taken off the selection', 'ok');
+    _caRenderSelected();
+    _caSelButtons();
+    caLoadSelected(true);
+  } catch (e) {
+    showToast('❌ Could not remove it — ' + ((e && e.message) || e), 'error');
+  }
+}
+
+function _caOpenSelected(us) {
+  const u = fatpdi.units.find(x => x.unitSerial === us);
+  if (!u) { showToast('Tap Refresh — that unit was not read', 'warn'); return; }
+  openFatPdiUnit(us);
+}
+
+// ── the signature pad ──────────────────────────────────────────────────────
+function caSignatureClose() {
+  const e = document.getElementById('ca-sig-pop');
+  if (e && e.remove) e.remove();
+}
+
+function caSignatureOpen() {
+  if (!CA.visitId) return;
+  if (!_caAllDone()) { showToast('Every selected unit has to be done first', 'warn'); return; }
+  caSignatureClose();
+  const pass = CA.sel.filter(x => x.result !== 'FAIL').length, fail = CA.sel.length - pass;
+  const ov = document.createElement('div');
+  ov.id = 'ca-sig-pop';
+  ov.className = 'ca-sig-wrap';
+  ov.innerHTML =
+    `<div class="ca-sig-box">
+       <div class="ca-sig-head">CUSTOMER ACCEPTANCE — SIGNATURE</div>
+       <div class="ca-sig-txt"><b>${_fpEsc(CA.customerRep || '')}</b> signs for ${CA.sel.length} unit(s) on
+         ${_fpEsc(CA.contract || '')}: ${pass} passed${fail ? `, <b class="f">${fail} with faults noted</b>` : ''}.</div>
+       <div class="ca-sig-units">${CA.sel.map(x => `<span class="${x.result === 'FAIL' ? 'f' : ''}">${_fpEsc(x.us)}</span>`).join('')}</div>
+       <div class="ca-sig-lbl">Sign in the box with a finger</div>
+       <canvas id="ca-sig-canvas" class="ca-sig-canvas"></canvas>
+       <div id="ca-sig-err" class="ca-sig-err"></div>
+       <div class="ca-sig-btns">
+         <button type="button" id="ca-sig-clear" class="ca-sig-clear">Clear</button>
+         <button type="button" id="ca-sig-save" class="ca-sig-save">✓ Save signature</button>
+       </div>
+       <button type="button" id="ca-sig-later" class="ca-sig-later">Not now</button>
+     </div>`;
+  document.body.appendChild(ov);
+
+  const cv = document.getElementById('ca-sig-canvas');
+  const rc = cv.getBoundingClientRect();
+  const scale = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.max(200, Math.round(rc.width * scale));
+  cv.height = Math.max(100, Math.round(rc.height * scale));
+  const g = cv.getContext('2d');
+  const ink = { len: 0, down: false, x: 0, y: 0 };
+  const wipe = () => { g.fillStyle = '#ffffff'; g.fillRect(0, 0, cv.width, cv.height); ink.len = 0; };
+  wipe();
+  g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#10203a'; g.lineWidth = 2.4 * scale;
+  const at = ev => {
+    const r = cv.getBoundingClientRect();
+    return { x: (ev.clientX - r.left) * cv.width / r.width, y: (ev.clientY - r.top) * cv.height / r.height };
+  };
+  cv.addEventListener('pointerdown', ev => {
+    ev.preventDefault();
+    const p = at(ev); ink.down = true; ink.x = p.x; ink.y = p.y;
+    const er = document.getElementById('ca-sig-err'); if (er) er.textContent = '';
+    try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
+    g.beginPath(); g.arc(p.x, p.y, g.lineWidth / 2, 0, Math.PI * 2); g.fillStyle = '#10203a'; g.fill();
+  });
+  cv.addEventListener('pointermove', ev => {
+    if (!ink.down) return;
+    ev.preventDefault();
+    const p = at(ev);
+    g.beginPath(); g.moveTo(ink.x, ink.y); g.lineTo(p.x, p.y); g.stroke();
+    ink.len += Math.hypot(p.x - ink.x, p.y - ink.y) / scale;
+    ink.x = p.x; ink.y = p.y;
+  });
+  const up = () => { ink.down = false; };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up); cv.addEventListener('pointerleave', up);
+
+  const err = document.getElementById('ca-sig-err');
+  document.getElementById('ca-sig-clear').onclick = () => { wipe(); err.textContent = ''; };
+  document.getElementById('ca-sig-later').onclick = caSignatureClose;
+  const save = document.getElementById('ca-sig-save');
+  save.onclick = async () => {
+    err.textContent = '';
+    if (ink.len < 60) { err.textContent = 'There is no signature in the box yet.'; return; }
+    save.disabled = true; save.textContent = 'Saving…';
+    try {
+      const { data, error } = await _withTimeout(supabaseClient.rpc('bc_ca_visit_sign', {
+        p_visit_id: CA.visitId, p_signed_name: CA.customerRep || '',
+        p_signature: cv.toDataURL('image/png'), p_by: String(state.operator || '')
+      }), 30000, 'Saving the signature');
+      if (error) throw error;
+      if (!data || data.ok === false) { err.textContent = (data && data.error) || 'Not saved.'; return; }
+      caSignatureClose();
+      showToast('✅ Signature saved with the acceptance record', 'ok');
+      CA.view = 'selected'; _fpShowList();
+      caLoadSelected(false);
+    } catch (e) {
+      err.textContent = 'Not saved — ' + ((e && e.message) || e) + '. The signature is still in the box; try Save again.';
+    } finally {
+      if (save.isConnected) { save.disabled = false; save.textContent = '✓ Save signature'; }
+    }
+  };
 }
 
 async function openFatPdiUnit(us) {
@@ -926,7 +1241,9 @@ async function openFatPdiUnit(us) {
   _fpCloseReadyPopup();
   _renderFatPdiUnit();
   const lv = document.getElementById('fatpdi-list-view'), uv = document.getElementById('fatpdi-unit-view');
+  const sv = document.getElementById('ca-selected-view');
   if (lv) lv.style.display = 'none';
+  if (sv) sv.style.display = 'none';
   if (uv) uv.style.display = '';
   window.scrollTo(0, 0);
 }
@@ -1108,7 +1425,7 @@ function _fpReadyPopup(us) {
     `<div class="fp-pop">
        <div class="fp-pop-head">✅ READY FOR FINAL APPROVAL</div>
        <div class="fp-pop-serial">${_fpEsc(us)}</div>
-       <div class="fp-pop-txt">Identity, assembly checks, FAT and PDI are all complete.<br>
+       <div class="fp-pop-txt">Every item on the acceptance checklist is marked.<br>
          This unit is <b>not finished</b> until the Final Approval Sign-Off is pressed.</div>
        <button type="button" class="fp-pop-go" id="fp-pop-go">🖊 Go to Final Approval Sign-Off</button>
        <button type="button" class="fp-pop-later" id="fp-pop-later">Not now</button>
@@ -1159,25 +1476,32 @@ async function _fpRefreshFinal(reload) {
   }
   try {
     const items = _fpItems();
-    const { data: st, error } = await supabaseClient.rpc('bc_ca_unit_state', {
-      p_visit_id: CA.visitId, p_unit_serial: us, p_expected_items: items.length
-    });
-    if (error) throw error;
-    if (fatpdi.focus !== us) return;
     CA.state = CA.state || {};
-    CA.state[us] = st || {};
+    // 26/11/2026: a tap only needs the panel redrawn from what is on screen —
+    // the database is asked when the unit is opened or saved (reload), not on
+    // every tap. One call per tap was pointless and slow on a phone signal.
+    let st = (!reload && CA.state[us] && CA.state[us].status) ? CA.state[us] : null;
+    if (!st) {
+      const { data, error } = await supabaseClient.rpc('bc_ca_unit_state', {
+        p_visit_id: CA.visitId, p_unit_serial: us, p_expected_items: items.length
+      });
+      if (error) throw error;
+      if (fatpdi.focus !== us) return;
+      st = data || {};
+      CA.state[us] = st;
+    }
 
     // already signed in this visit — show it and leave the button alone
     if (st && String(st.status || '') === 'SIGNED') {
       const sg = (st.round > 1 ? `round ${st.round} · ` : '') + (st.result || '');
       if (el) el.innerHTML =
-        `<div class="fp-req"><span class="ok">✓</span><span><b>Signed by the customer</b>` +
+        `<div class="fp-req"><span class="ok">✓</span><span><b>This unit is done</b>` +
         ` — ${_fpEsc(sg)}</span></div>` +
         (Number(st.open_fails || 0) > 0
           ? `<div class="fp-req"><span class="no">!</span><span>${st.open_fails}` +
             ` fault(s) acknowledged on the signature — reopen the gun once they are put right</span></div>`
           : '');
-      if (btn) { btn.disabled = true; btn.textContent = '✓ Signed by the customer'; }
+      if (btn) { btn.disabled = true; btn.textContent = '✓ Unit done'; }
       if (btn) btn.classList.remove('fp-blink');
       _fpCloseReadyPopup();
       return;
@@ -1269,13 +1593,11 @@ async function signOffFromPdi() {
       .map(f => `   • ${f.item_label || f.item_id}${f.remarks ? ' — ' + f.remarks : ''}`)
       .join('\n');
 
-    // who is signing for the customer — asked every time, never remembered
-    const who = (prompt(
-      'CLIENT ACCEPTANCE — SIGN-OFF\n\n' + us + '\n\n' +
-      'Name of the customer\'s representative signing for this gun:',
-      CA.customerRep || '') || '').trim();
-    if (!who) { showToast('Not signed — the customer\'s name is needed', 'warn'); return; }
-    CA.customerRep = who;
+    // 26/11/2026: the representative is named ONCE, when the visit starts, and
+    // signs ONCE on the screen when every selected unit is done. So this step
+    // no longer asks for the name on every unit.
+    const who = String(CA.customerRep || '').trim();
+    if (!who) { showToast('Not signed — no representative is named on this visit', 'error'); return; }
 
     let acknowledged = false;
     if (fails > 0) {
@@ -1287,9 +1609,10 @@ async function signOffFromPdi() {
         'signed again.\n\nAcknowledge and sign?');
       if (!acknowledged) { showToast('Not signed', 'warn'); return; }
     } else {
-      if (!confirm('CLIENT ACCEPTANCE SIGN-OFF\n\n' + us +
-                   '\n\nEvery item passed.\n\nSigned by ' + who +
-                   ', witnessed by OP ' + op + '?')) {
+      if (!confirm('CLIENT ACCEPTANCE — UNIT DONE\n\n' + us +
+                   '\n\nEvery item passed.\n\nFinish this unit for ' + who +
+                   ', witnessed by OP ' + op + '?\n\n(' + who + ' signs once, when all ' +
+                   'the selected units are done.)')) {
         showToast('Not signed', 'warn'); return;
       }
     }
@@ -1304,8 +1627,10 @@ async function signOffFromPdi() {
     const u = fatpdi.units.find(x => x.unitSerial === us);
     if (u) { u.status = 'SIGNED'; u.caResult = (res && res.result) || null; }
     showToast(fails > 0
-      ? `✅ ${us} signed by ${who} — ${fails} fault(s) recorded`
-      : `✅ ${us} signed by ${who} — all passed`, 'ok');
+      ? `✅ ${us} done — ${fails} fault(s) recorded`
+      : `✅ ${us} done — all passed`, 'ok');
+    CA.sigPrompted = false;          // a unit just finished: offer the signature if it was the last
+    CA.view = 'selected';            // and go to the page where they are all together
     closeFatPdiUnit(true);
   } catch (e) {
     console.error('[Client sign-off] error', e);
@@ -1347,7 +1672,10 @@ function _fpSet(btn) {
     row.querySelectorAll('.fp-btn').forEach(b => b.classList.toggle('selected', b.dataset.val === val));
   }
   _fpUpdateCount();
-  if (fatpdi.stage === 'PDI' && fatpdi._final && fatpdi._final.us === us) _fpRefreshFinal(false);
+  // 26/11/2026: this waited on fatpdi._final, which the customer copy never
+  // sets — so the sign-off panel did not follow the taps at all, and stayed
+  // on "0 of N" until Save was pressed and the unit opened again.
+  if (fatpdi.stage === 'PDI') _fpRefreshFinal(false);
 }
 function _fpRemarks(ta) {
   if (!fatpdi.focus) return;
@@ -1379,7 +1707,12 @@ function closeFatPdiUnit(skipAsk) {
   fatpdi._readyShown = null; _fpCloseReadyPopup();   // v1.44
   _fpShowList();
   _renderFatPdiList();
-  if (us) {
+  if (CA.view === 'selected') {
+    // 26/11/2026: back on the selected page — read it again, and if that was
+    // the last unit, the signature pad comes up by itself
+    _caRenderSelected();
+    caLoadSelected(true);
+  } else if (us) {
     const row = [...document.querySelectorAll('#fatpdi-grid tr[data-unit]')].find(r => r.dataset.unit === us);
     if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
   }
@@ -1404,7 +1737,12 @@ async function saveFatPdiUnit() {
   // as before. Save used to close the page on a finished gun, which is how
   // RLL 260207 ended up through FAT and PDI with no sign-off.
   if (fatpdi.stage === 'PDI' && fatpdi.focus === us) {
-    const ready = _fpReadyToSign(us);
+    // 26/11/2026: judged from what is marked, not from the database's answer
+    // from BEFORE this save — that was always "not ready", so Save threw the
+    // man back to the list with the unit one tap from finished.
+    const pr = _fpProgress(us);
+    const ready = pr.total > 0 && pr.done >= pr.total
+      && !(CA.state && CA.state[us] && CA.state[us].status === 'SIGNED');
     _renderFatPdiUnit();   // shows what is saved and re-checks the sign-off list
     if (ready || fatpdi.cardType === 'GRN40') {
       const fin = document.getElementById('fp-final');
